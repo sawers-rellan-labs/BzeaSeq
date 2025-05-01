@@ -1,0 +1,55 @@
+name: bzeaseq
+channels:
+  - bioconda
+  - conda-forge
+
+dependencies:
+  # Core tools
+  - conda-forge::python=3.11.12
+  - bioconda::snakemake=9.3.3
+  - conda-forge::r-base=4.4.2
+
+
+  # Alignment and mapping
+  - bioconda::bwa=0.7.19
+  - bioconda::samtools=1.21
+  
+  # Read simulation
+  - bioconda::art=2016.06.05
+  - bioconda::dwgsim=1.1.14
+  
+  # Variant calling
+  - bioconda::gatk4=4.6.2.0
+  - bioconda::bcftools=1.21
+  - bioconda::vcftools=0.1.16
+  
+ # Genomic file manipulation
+  - bioconda::bedtools=2.31.1
+  - bioconda::pysam=0.23.0
+  - bioconda::tabix=1.11
+  
+  # Quality control
+  - bioconda::trimmomatic=0.39
+  - bioconda::fastqc=0.11.9
+  
+  # Python libraries
+  - conda-forge::pandas=1.5.3
+  - conda-forge::numpy=1.23.5
+  - conda-forge::scikit-learn=1.6.1
+  - conda-forge::matplotlib=3.10.1
+  - conda-forge::seaborn=0.13.2
+  - conda-forge::biopython=1.85
+  
+    # R libraries
+  - conda-forge::r-tidyverse=2.0.0
+  - conda-forge::r-data.table=1.17.0
+  - conda-forge::r-ggplot2=3.5.2
+  - conda-forge::r-gridextra=2.3
+  - bioconda::bioconductor-genomicranges=1.58.0
+  - conda-forge::r-vcfr=1.15.0
+  - bioconda::bioconductor-snprelate=1.40.0
+
+
+  # File manipulation and compression
+  - conda-forge::pigz=2.8
+  - conda-forge::parallel=20250422
