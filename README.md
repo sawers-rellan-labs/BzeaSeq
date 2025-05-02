@@ -293,15 +293,80 @@ bcftools view -q 0.05:minor -S wideseq_ref_id.list --min-ac=1 \
   -o ../Zea-vardb/chr10.wideseq.v4.vcf.gz
 ```
 
-#### 4.4.3 Extract Essential Data
+#### 4.4.3 Creating Minimal VCF Files
 
-To reduce file sizes, extract only essential genotype information:
+To reduce file sizes and simplify processing, we can create minimal VCF files containing only genotype (GT) information with no additional FORMAT or INFO fields:
+
+##### Option 1: Using bcftools annotate
+This approach removes all INFO fields and all FORMAT fields except for GT:
 
 ```bash
-# Extract only genotype data for selected samples
-bcftools query -s $(cat wideseq_ref_id.list | tr '\n' ',') \
-  -f '%CHROM\t%POS\t%ID\t%REF\t%ALT\t%QUAL\t%FILTER\tGT[\t%GT]\n' \
-  ../Zea-vardb/merge_10.header.vcf.gz > ../Zea-vardb/merge_10.genotypes.txt
+# Create a minimal VCF with only GT field, no other FORMAT or INFO fields
+bcftools annotate -x INFO,^FORMAT/GT \
+  ../Zea-vardb/chr10.wideseq.v4.vcf.gz \
+  -Oz -o ../Zea-vardb/chr10.wideseq.v4.minimal.vcf.gz 
+
+# Index the output file
+bcftools index ../Zea-vardb/chr10.wideseq.v4.minimal.vcf.gz 
+```
+
+##### Option 2: Complete script for processing all chromosomes
+
+```bash
+#!/bin/bash
+# create_minimal_vcf.sh
+
+INPUT_DIR="../Zea-vardb"
+OUTPUT_DIR="teosinte_minimal_vcf"
+SAMPLES_FILE="wideseq_ref_id.list"
+
+# Create output directory
+mkdir -p ${OUTPUT_DIR}
+
+# Convert sample list to comma-separated format for bcftools
+SAMPLES=$(cat ${SAMPLES_FILE} | tr '\n' ',')
+# Remove trailing comma if needed
+SAMPLES=${SAMPLES%,}
+
+# Create a minimal header template
+cat > ${OUTPUT_DIR}/minimal_header.txt << EOL
+##fileformat=VCFv4.2
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+EOL
+
+# Process each chromosome file
+for i in $(seq 1 10); do
+    echo "Processing merge_${i}.filter.vcf.gz..."
+    
+    # Extract contig lines from the original header for this chromosome
+    bcftools view -h ${INPUT_DIR}/merge_${i}.filter.vcf.gz | grep "^##contig" > ${OUTPUT_DIR}/contigs_${i}.txt
+    
+    # Extract samples line from the header
+    bcftools view -h ${INPUT_DIR}/merge_${i}.filter.vcf.gz | grep "^#CHROM" > ${OUTPUT_DIR}/samples_${i}.txt
+    
+    # Create complete header for this chromosome
+    cat ${OUTPUT_DIR}/minimal_header.txt ${OUTPUT_DIR}/contigs_${i}.txt ${OUTPUT_DIR}/samples_${i}.txt > ${OUTPUT_DIR}/header_${i}.txt
+    
+    # Remove all INFO fields and FORMAT fields except GT
+    bcftools annotate -x INFO,^FORMAT/GT ${INPUT_DIR}/merge_${i}.filter.vcf.gz -Ov -o ${OUTPUT_DIR}/data_${i}.vcf
+    
+    # Replace header with minimal header
+    bcftools reheader -h ${OUTPUT_DIR}/header_${i}.txt ${OUTPUT_DIR}/data_${i}.vcf | \
+    bcftools view -Oz -o ${OUTPUT_DIR}/merge_${i}.minimal.vcf.gz
+    
+    # Index the output file
+    bcftools index ${OUTPUT_DIR}/merge_${i}.minimal.vcf.gz
+    
+    # Clean up temporary files
+    rm ${OUTPUT_DIR}/contigs_${i}.txt ${OUTPUT_DIR}/samples_${i}.txt ${OUTPUT_DIR}/header_${i}.txt ${OUTPUT_DIR}/data_${i}.vcf
+    
+    echo "Completed merge_${i}"
+done
+
+# Clean up remaining temporary files
+rm ${OUTPUT_DIR}/minimal_header.txt
+
+echo "All files processed successfully."
 ```
 
 #### 4.4.4 Chromosome Naming Standardization

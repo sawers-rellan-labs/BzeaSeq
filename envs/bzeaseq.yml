@@ -2,14 +2,16 @@ name: bzeaseq
 channels:
   - bioconda
   - conda-forge
-
+  - hcc
 dependencies:
   # Core tools
   - conda-forge::python=3.11.12
   - bioconda::snakemake=9.3.3
   - conda-forge::r-base=4.4.2
 
-
+  # aspera download
+  - hcc::aspera-cli=3.9.6
+  
   # Alignment and mapping
   - bioconda::bwa=0.7.19
   - bioconda::samtools=1.21
