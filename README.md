@@ -141,6 +141,19 @@ done
 echo "Download completed."
 ```
 
+#### 4.2.2 File Naming Considerations
+
+When working with the Schnable2023 dataset, you may encounter files with inconsistent naming. Some files may have typos in the prefix (e.g., `schanble2023` instead of `schnable2023`). For consistent pipeline processing, these naming issues need to be corrected using bash parameter substitution:
+
+```bash
+# Fix file naming inconsistencies using bash parameter substitution
+for file in schanble2023_*.vcf.gz; do 
+    mv -v "$file" "${file/schanble/schnable}"
+done
+```
+
+This command will automatically replace all instances of "schanble" with "schnable" in the filenames, ensuring consistent naming throughout the dataset.
+
 ### 4.3 Data Exploration and Preparation
 
 #### 4.3.1 Sample and Variant Statistics
@@ -159,6 +172,8 @@ bcftools stats schnable2023/schnable2023_chr10.vcf.gz > schnable2023_chr10.stats
 ```
 
 #### 4.3.2 Metadata Analysis for Teosinte Sample Selection
+
+> **Note on Metadata**: The metadata for the Schnable2023 dataset was obtained from the supplementary materials in the original publication and manually curated to correct multiple typos, species name inconsistencies, and formatting issues.
 
 Analyze the metadata to identify teosinte and Tripsacum samples:
 
@@ -373,4 +388,4 @@ For WideSeq analysis:
 
 3. SNPVersity 2.0: A web portal for maize SNP effect prediction and browsing. Database, 2018. https://doi.org/10.1093/database/bay037
 
-4. Jiao, Y., et al. (2017). Improved maize reference genome with single-molecule technologies. Nature, 546(7659), 524-527. https://doi.org/10.1038/nature22971
+4. Hufford, M.B., Seetharam, A.S., Woodhouse, M.R., et al. (2021). De novo assembly, annotation, and comparative analysis of 26 diverse maize genomes. Science, 373(6555), 655-662. https://doi.org/10.1126/science.abg5289
