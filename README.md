@@ -1,28 +1,38 @@
-# BzeaSeq: Teosinte HapMap Integration and WideSeq Analysis
+# BzeaSeq: Teosinte Reference Variant Set and WideSeq Analysis
 
-This repository contains pipelines for integrating Teosinte relatives into the HapMap3 SNP database and performing ancestry segment calling using the WideSeq approach.
+## Table of Contents
+- [1. Overview](#1-overview)
+- [2. Directory Structure](#2-directory-structure)
+- [3. Workflow Diagram](#3-workflow-diagram)
+- [4. Teosinte Reference Variant Set Construction](#4-teosinte-reference-variant-set-construction)
+  - [4.1 Background](#41-background)
+  - [4.2 Data Acquisition](#42-data-acquisition)
+  - [4.3 Data Exploration and Preparation](#43-data-exploration-and-preparation)
+  - [4.4 Data Processing Pipeline](#44-data-processing-pipeline)
+- [5. References](#5-references)
+
+This repository contains pipelines for constructing a Teosinte reference variant set from the Chen 2022 dataset and performing ancestry segment calling using the WideSeq approach.
 
 ## 1. Overview
 
 This project consists of two main pipelines:
 
-1. **HapMap Expansion Pipeline**: Simulates short reads from Teosinte relative assemblies, aligns them to the B73 reference, calls SNPs, and integrates them with HapMap3.
+1. **Teosinte Reference Variant Set Construction**: Downloads and processes large-scale variant data from teosinte samples in the Chen 2022 study, including header correction, filtering, and liftover from B73v4 to B73v5 reference.
 
-2. **WideSeq Analysis Pipeline**: Processes WideSeq data to identify ancestry segments by aligning to B73, calling SNPs, comparing to HapMap3, and calculating bin frequencies and haplotype similarities.
+2. **WideSeq Analysis Pipeline**: Processes WideSeq data to identify ancestry segments by aligning to B73, calling SNPs, comparing to the teosinte reference variant set, and calculating bin frequencies and haplotype similarities.
 
 Both pipelines are optimized for high-performance computing environments using LSF job scheduling.
 
 ## 2. Directory Structure
 
 - `scripts/`: Contains all pipeline scripts
-  - `hapmap_expansion/`: Scripts for HapMap3 expansion pipeline
+  - `teosinte_variants/`: Scripts for processing Chen 2022 teosinte variants
   - `wideseq/`: Scripts for WideSeq ancestry segment calling
   - `utilities/`: Helper scripts for monitoring and job management
 - `data/`: Input data
-  - `reference/`: B73 reference genome
-  - `wild_relatives/`: Wild relative genome assemblies
+  - `reference/`: B73 reference genome (v4 and v5)
+  - `chen2022/`: Chen 2022 teosinte variant data
   - `wideseq_fastq/`: WideSeq sequencing data
-  - `hapmap/`: HapMap3 VCF files
 - `results/`: Pipeline outputs
 - `logs/`: Log files from pipeline runs
 - `envs/`: Conda environment files
@@ -32,27 +42,27 @@ Both pipelines are optimized for high-performance computing environments using L
 
 ```mermaid
 graph TD
-    subgraph "HapMap Expansion Pipeline"
-        A1[Teosinte Assemblies] --> A2[Read Simulation]
-        A2 --> A3["BWA Mapping (by chromosome)"]
-        A3 --> A4["Variant Calling (by chromosome)"]
-        A4 --> A5["SNP Filtering (by chromosome)"]
-        A5 --> A6["Intersect with HapMap3 (by chromosome)"]
-        A6 --> A7[Merge Chromosomes]
-        A7 --> A8[Extended HapMap Database]
+    subgraph "Teosinte Reference Variant Set Construction"
+        A1[Chen 2022 VCF Files] --> A2[Download VCF Files]
+        A2 --> A3[Header Correction]
+        A3 --> A4[Sample & Variant Filtering]
+        A4 --> A5[Extract Genotype Data]
+        A5 --> A6[Chromosome Name Standardization]
+        A6 --> A7[Liftover v4 to v5]
+        A7 --> A8[Teosinte Reference Variant Set]
     end
 
     subgraph "WideSeq Analysis Pipeline"
         B1[WideSeq Raw FASTQ] --> B2[Trimmomatic]
         B2 --> B3["BWA Mapping (by chromosome)"]
         B3 --> B4["BCFtools mpileup (by chromosome)"]
-        B4 --> B5["Filter with Extended HapMap (by chromosome)"]
+        B4 --> B5["Filter with Teosinte Reference (by chromosome)"]
         
         A8 -.-> B5
         
         B5 --> B6["Bin Frequency Calculation (by chromosome)"]
         B5 --> B7["Extract Non-reference SNPs (by chromosome)"]
-        B7 --> B8["HapMap Panel Subsetting (by chromosome)"]
+        B7 --> B8["Reference Panel Subsetting (by chromosome)"]
         B8 --> B9["Jaccard Index Calculation (by chromosome)"]
         
         B6 --> B10[Merge Bin Frequencies]
@@ -70,17 +80,17 @@ graph TD
     style B14 fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
-## Incorporating Teosinte (Wild Maize) Variants from Chen 2022
+## 4. Teosinte Reference Variant Set Construction
 
-### Background
+### 4.1 Background
 
 The Chen 2022 study published in Nature ("Genome sequencing reveals evidence of adaptive variation in the genus *Zea*") includes approximately 75 million SNPs from teosinte samples in B73 reference genome version 4. The plan is to download these samples and lift them over to reference genome version 5 for integration into the WideSeq pipeline.
 
-### Data Acquisition
+### 4.2 Data Acquisition
 
 The SNP data is distributed across multiple files named `merge_1.filter.vcf.gz` through `merge_10.filter.vcf.gz` and is available from the Chinese National GeneBank (CNGB).
 
-#### Download Script
+#### 4.2.1 Download Script
 
 The script below uses Aspera to download the SNP files. It includes checks to avoid re-downloading files that already exist locally:
 
@@ -169,9 +179,9 @@ log "All download attempts finished."
 exit 0
 ```
 
-### Data Exploration and Preparation
+### 4.3 Data Exploration and Preparation
 
-#### Sample and Variant Statistics
+#### 4.3.1 Sample and Variant Statistics
 
 To verify the downloaded data, we can examine the number of samples and variants:
 
@@ -202,7 +212,7 @@ SN	0	number of multiallelic SNP sites:	319084
 
 The statistics show 744 samples and over 5 million SNPs in chromosome 10 alone, confirming the dataset should contain more than 70 million SNPs across all chromosomes.
 
-#### Reference Genotype Confirmation
+#### 4.3.2 Reference Genotype Confirmation
 
 We confirmed that B73 (the reference genotype) is included in the dataset:
 
@@ -214,7 +224,7 @@ grep B73 chen2022_passport.tab
 B73	-	-	-	285169576	277505548	97.31 	97.47 	19.72 	60259366	21.13 	-	-	Zea mays subsp. mays	Zea mays subsp. mays (TEM)
 ```
 
-#### Teosinte Sample Analysis
+#### 4.3.3 Teosinte Sample Analysis
 
 The dataset contains 238 teosinte samples (non-maize subspecies and non-Tripsacum):
 
@@ -244,7 +254,7 @@ grep -v "subsp. mays" chen2022_passport.tab | grep -v "Tripsacum"| cut -f 15|  s
      19 Zea perennis
 ```
 
-#### Sample Selection for Analysis
+#### 4.3.4 Sample Selection for Analysis
 
 To prepare for downstream analysis, we selected teosinte samples and the B73 reference:
 
@@ -255,92 +265,133 @@ cat B73_id.list teosinte_id.list > wideseq_ref_id.list
 more wideseq_ref_id.list
 ```
 
-### Downstream Processing Plan
+### 4.4 Data Processing Pipeline
 
-The next steps in the analysis pipeline are:
+#### 4.4.1 Header Correction
 
-1. **Filter VCF Files**:
-   - Select only samples from `wideseq_ref_id.list`
-   - Remove non-variant sites using bcftools
+The VCF files have improper headers that need to be fixed before processing:
 
-   ```bash
-   # Example command to filter samples and variants
-   bcftools view -q 0.05:minor  -S wideseq_ref_id.list --min-ac=1 ../Zea-vardb/merge_10.filter.vcf.gz  -o ../Zea-vardb/chr1.wideseq.v4.vcf.gz
-   ```
-```
-Contig '10' is not defined in the header. (Quick workaround: index the file with tabix.)
-```
-I need just the positions for my analysis I am not doing further filtering from sample stats like DP.
-I  have the correct headers in `chen2022_vcf_header.txt`
-The names in `Zm-B73-REFERENCE-GRAMENE-4.0` are Chr1...Chr10, i need to change the names and reindex
-The names in `B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0` are chr1...chr10
-I need to make those names and the names in the chain file `B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain`
-compatible.
-the chainfiles used to be broken for reading with the R package "liftOver" and need to change spaces to tabs
 ```bash
-perl -i -pe ' if ( $_ !~ /chain/) {s/ +/\t/g}' B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain
-```
+# Replace existing headers with corrected ones
+bcftools reheader -h chen2022_vcf_header.txt ../Zea-vardb/merge_10.filter.vcf.gz -o ../Zea-vardb/merge_10.header.vcf.gz
 
-probably I'll use  need `LiftoverVcf` from picard
-
-```
-picard LiftoverVcf \\
-     I=input.vcf \\
-     O=lifted_over.vcf \\
-     CHAIN=B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain \\
-     REJECT=rejected_variants.vcf \\
-     R=reference_sequence.fasta
-```
-
-The chromosomes in this file are just numbers I need to change the to be compatible with v5
-
-I need to add replace the header with this one.
-80% of the variants have MAF < 0.05
-If I filter for this I'll get 5.6e+07 variants, i.e one snp every 40 bp. Way more than I need.
-2500 per 100kb window.
-
-Or export to hapmap then back to vcf?
-So I export just the genotype field to reduce the vcf size.
-
-
-```
-bcftools query -s wideseq_ref_id.list \
-      -f '%CHROM\t%POS\t%ID\t%REF\t%ALT\t%QUAL\t%FILTER\tGT[\t%GT]\n' \
-      ../Zea-vardb/merge_${i}.filter.vcf.gz
-
-```
-```
+# Alternative using Picard
 picard FixVcfHeader \
-     --CHECK_FIRST_N_RECORDS 1000\
+     --CHECK_FIRST_N_RECORDS 1000 \
      -I ../Zea-vardb/merge_10.filter.vcf.gz \
      -O ../Zea-vardb/merge_10.header.vcf.gz
 ```
 
-2. **Genomic Coordinate Conversion**:
-   - Lift over variants from B73 reference v4 to v5
-   - Use chain file: `B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain`
- # 
- 
+#### 4.4.2 Sample and Variant Filtering
 
-   ```bash
-   # Example liftover command using CrossMap
-   CrossMap.py vcf B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain filtered/merge_1.teosinte.vcf.gz B73v5.fa lifted/merge_1.teosinte.v5.vcf
-   ```
+Extract only samples of interest and apply filtering:
 
-3. **VCF Files Inspection**:
+```bash
+# Select samples and filter for variants with MAF > 0.05
+bcftools view -q 0.05:minor -S wideseq_ref_id.list --min-ac=1 \
+  ../Zea-vardb/merge_10.header.vcf.gz \
+  -o ../Zea-vardb/chr10.wideseq.v4.vcf.gz
+```
 
-   ```bash
-   bcftools head ../Zea-vardb/merge_10.filter.vcf.gz
-   ```
+#### 4.4.3 Extract Essential Data
 
-4. **Integration with WideSeq Pipeline**:
-   - Process the lifted-over variants through the standard WideSeq workflow
-   - Merge with existing WideSeq data if applicable
+To reduce file sizes, extract only essential genotype information:
 
-### References
+```bash
+# Extract only genotype data for selected samples
+bcftools query -s $(cat wideseq_ref_id.list | tr '\n' ',') \
+  -f '%CHROM\t%POS\t%ID\t%REF\t%ALT\t%QUAL\t%FILTER\tGT[\t%GT]\n' \
+  ../Zea-vardb/merge_10.header.vcf.gz > ../Zea-vardb/merge_10.genotypes.txt
+```
+
+#### 4.4.4 Chromosome Naming Standardization
+
+Different references use different chromosome naming conventions:
+- `Zm-B73-REFERENCE-GRAMENE-4.0`: Chr1, Chr2, ... Chr10
+- `B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain`: chr1, chr2, ... chr10
+- VCF files from Chen 2022: 1, 2, ... 10
+
+Standardize chromosome names to ensure compatibility:
+
+```bash
+# For VCF files - change chromosome names to match reference
+for i in $(seq 1 10); do
+  # Create temporary file with chr names converted to Chr format
+  bcftools annotate --rename-chrs chr_name_map.txt \
+    ../Zea-vardb/merge_${i}.header.vcf.gz \
+    -o ../Zea-vardb/merge_${i}.renamed.vcf.gz
+  
+  # Index the renamed files
+  bcftools index ../Zea-vardb/merge_${i}.renamed.vcf.gz
+done
+```
+
+Where `chr_name_map.txt` contains:
+```
+1   Chr1
+2   Chr2
+3   Chr3
+4   Chr4
+5   Chr5
+6   Chr6
+7   Chr7
+8   Chr8
+9   Chr9
+10  Chr10
+```
+
+#### 4.4.5 Liftover from v4 to v5 Reference
+
+##### Fix Chain File Format
+The chain file needs to be properly formatted:
+
+```bash
+# Convert spaces to tabs in chain file for compatibility with tools
+perl -i -pe 'if ($_ !~ /chain/) {s/ +/\t/g}' B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain
+```
+
+##### Perform Liftover Using Picard
+Run liftover for each chromosome:
+
+```bash
+# Liftover script
+for i in $(seq 1 10); do
+  picard LiftoverVcf \
+    I=../Zea-vardb/merge_${i}.renamed.vcf.gz \
+    O=../Zea-vardb/v5/merge_${i}.v5.vcf \
+    CHAIN=B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain \
+    REJECT=../Zea-vardb/v5/merge_${i}.rejected.vcf \
+    R=Zm-B73-REFERENCE-NAM-5.0.fa
+    
+  # Compress and index result
+  bgzip -f ../Zea-vardb/v5/merge_${i}.v5.vcf
+  bcftools index ../Zea-vardb/v5/merge_${i}.v5.vcf.gz
+done
+```
+
+Alternative approach using CrossMap:
+
+```bash
+# Example liftover command using CrossMap
+CrossMap.py vcf B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain filtered/merge_1.teosinte.vcf.gz B73v5.fa lifted/merge_1.teosinte.v5.vcf
+```
+
+#### 4.4.6 Variant Filtering Considerations
+
+Analysis of the dataset shows:
+- 80% of variants have MAF < 0.05
+- With MAF > 0.05 filter, expect ~56 million variants (~1 SNP per 40 bp)
+- This equals approximately 2,500 SNPs per 100kb window
+
+Consider additional filtering strategies based on analysis requirements:
+- Further MAF filtering if fewer variants are needed
+- Export to hapmap format and back to VCF
+- Filter based on genomic regions of interest
+
+#### 4.4.7 Integration with WideSeq Pipeline
+
+After liftover and filtering, the data can be integrated with the WideSeq pipeline for analysis with other maize diversity data.
+
+## 5. References
 
 Chen, Q., Lu, Y., Yang, Y. et al. Genome sequencing reveals evidence of adaptive variation in the genus Zea. Nat Genet 54, 1386–1396 (2022). https://doi.org/10.1038/s41588-022-01184-y
-
-
-
-
