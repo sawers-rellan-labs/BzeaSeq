@@ -20,6 +20,7 @@ dependencies:
   
   # Variant calling
   - bioconda::gatk4=4.6.2.0
+  - bioconda:picard=3.4.0
   - bioconda::bcftools=1.21
   - bioconda::vcftools=0.1.16
   
