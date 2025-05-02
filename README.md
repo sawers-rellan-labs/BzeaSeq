@@ -386,6 +386,5 @@ For WideSeq analysis:
 
 2. Chen, Q., et al. (2022). Genome sequencing reveals evidence of adaptive variation in the genus *Zea*. Nature Genetics, 54, 1386-1396. https://doi.org/10.1038/s41588-022-01184-y
 
-3. SNPVersity 2.0: A web portal for maize SNP effect prediction and browsing. Database, 2018. https://doi.org/10.1093/database/bay037
-
+3. Andorf, C.M., Ross-Ibarra, J., Seetharam, A.S., et al. (2025). A unified VCF dataset from nearly 1,500 diverse maize accessions and resources to explore the genomic landscape of maize. G3 Genes|Genomes|Genetics, 15(2), jkae281. https://doi.org/10.1093/g3journal/jkae281
 4. Hufford, M.B., Seetharam, A.S., Woodhouse, M.R., et al. (2021). De novo assembly, annotation, and comparative analysis of 26 diverse maize genomes. Science, 373(6555), 655-662. https://doi.org/10.1126/science.abg5289
