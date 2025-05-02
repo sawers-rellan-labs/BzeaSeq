@@ -96,87 +96,256 @@ The script below uses Aspera to download the SNP files. It includes checks to av
 
 ```bash
 #!/bin/bash
-# download_chen2022_SNPs.sh 
-# downloading data from https://ftp.cngb.org/pub/CNSA/data3/CNP0001565/zeamap/02_Variants/PAN_Zea_Variants/Zea-vardb/
+# download_chen2022_SNPs.sh
+#
+# Downloads VCF files specified by START_NUM and END_NUM from the Chen 2022 Zea mays
+# dataset via Aspera (ascp).
+# Includes MD5 checksum verification after download, reading expected checksums
+# from an external file (snp.vcf.md5) downloaded from the same remote directory.
+# Assumes snp.vcf.md5 format: <checksum><whitespace><filename> per line.
+# Handles multiple spaces or tabs as delimiters between checksum and filename.
+#
+# Source: https://ftp.cngb.org/pub/CNSA/data3/CNP0001565/zeamap/02_Variants/PAN_Zea_Variants/Zea-vardb/
 
 # --- Configuration ---
 KEY_FILE="aspera_download.key"
-KEY_URL="ftp://ftp.cngb.org/pub/Tool/Aspera/aspera_download.key"
-REMOTE_USER_HOST="aspera_download@183.239.175.39"
-REMOTE_BASE_DIR="/pub/CNSA/data3/CNP0001565/zeamap/02_Variants/PAN_Zea_Variants/Zea-vardb"
-ASCP_PORT="33001"
-ASCP_RATE="100m"  # Max transfer rate
-ASCP_OPTS="-T -k 1"  # Disable encryption, enable resume
-LOCAL_DEST_DIR="./"  # Download to the current directory
-START_NUM=1
-END_NUM=10
+KEY_URL="ftp://ftp.cngb.org/pub/Tool/Aspera/aspera_download.key" # URL to fetch the key
+REMOTE_USER_HOST="aspera_download@183.239.175.39" # Aspera server address
+REMOTE_BASE_DIR="/pub/CNSA/data3/CNP0001565/zeamap/02_Variants/PAN_Zea_Variants/Zea-vardb" # Base remote dir for VCFs and MD5 file
+ASCP_PORT="33001" # Aspera port
+ASCP_RATE="100m"  # Max transfer rate for VCF files (e.g., 100m = 100 Mbps)
+ASCP_MD5_RATE="10m" # Max transfer rate for the small MD5 file
+ASCP_OPTS="-T -k 1"  # Aspera options: -T disable encryption, -k 1 enable resume
+LOCAL_DEST_DIR="./"  # Download destination (current directory)
+START_NUM=1          # First file number to download (e.g., merge_1.filter.vcf.gz)
+END_NUM=10           # Last file number to download (e.g., merge_10.filter.vcf.gz)
+
+MD5_FILENAME="snp.vcf.md5" # Local and remote name for the checksum file
+REMOTE_MD5_FILE_PATH="${REMOTE_USER_HOST}:${REMOTE_BASE_DIR}/${MD5_FILENAME}" # Full remote path for ascp
+LOCAL_MD5_FILE_PATH="${LOCAL_DEST_DIR}/${MD5_FILENAME}" # Local path for the checksum file
 # --- End Configuration ---
 
-# Function for logging messages
+# --- Script ---
+
+# Function for logging messages with timestamp
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
-# 1. Download the Aspera key file if it doesn't exist
+# Function to find the correct md5 command ('md5sum' or 'md5 -q')
+get_md5_command() {
+    if command -v md5sum &> /dev/null; then
+        echo "md5sum"
+    elif command -v md5 &> /dev/null; then
+        # macOS uses 'md5 -q' for just the hash output
+        echo "md5 -q"
+    else
+        echo "" # No command found
+    fi
+}
+
+# Determine MD5 command to use
+MD5_CMD=$(get_md5_command)
+if [ -z "$MD5_CMD" ]; then
+    log "ERROR: Neither 'md5sum' nor 'md5' command found in PATH. Cannot perform checksum verification."
+    exit 1
+fi
+log "Using '$MD5_CMD' for checksum calculation."
+
+# 1. Download the Aspera key file if it doesn't exist locally
 if [ -f "${KEY_FILE}" ]; then
-    log "Aspera key file '${KEY_FILE}' already exists, skipping download."
+    log "Aspera key file '${KEY_FILE}' already exists locally. Skipping download."
 else
-    log "Attempting to download Aspera key from ${KEY_URL}..."
-    curl -o "${KEY_FILE}" -s "${KEY_URL}"
-    
-    # Check if curl command failed (exit status non-zero)
-    if [ $? -ne 0 ]; then
-        log "ERROR: Failed to download the Aspera key file using curl. Please check network connection and URL."
+    log "Attempting to download Aspera key file from ${KEY_URL}..."
+    curl -o "${KEY_FILE}" -fsSL "${KEY_URL}" # -f: fail silently on server error, -sS: show error if fails, -L: follow redirects
+    # Check if curl command failed or file wasn't created
+    if [ $? -ne 0 ] || [ ! -f "${KEY_FILE}" ]; then
+        log "ERROR: Failed to download or find Aspera key file '${KEY_FILE}' from ${KEY_URL}."
+        log "Please check network connection, URL, and permissions."
+        # Consider removing partially downloaded key file if curl failed midway: rm -f "${KEY_FILE}"
         exit 1
     fi
-    
-    # Check if the key file actually exists after curl command
-    if [ ! -f "${KEY_FILE}" ]; then
-        log "ERROR: Aspera key file '${KEY_FILE}' not found after download attempt. Curl might have failed silently."
-        exit 1
-    fi
-    
     log "Aspera key file '${KEY_FILE}' downloaded successfully."
 fi
 
-# 2. Loop through the file numbers and download using ascp
-log "Starting downloads from ${START_NUM} to ${END_NUM}..."
+# 2. Download the MD5 checksum file using ascp if it doesn't exist locally
+if [ -f "${LOCAL_MD5_FILE_PATH}" ]; then
+    log "MD5 checksum file '${MD5_FILENAME}' already exists locally. Skipping download."
+else
+    log "Attempting to download MD5 checksum file '${MD5_FILENAME}' using ascp from ${REMOTE_BASE_DIR}..."
+    # Using specific rate limit for potentially small file
+    ascp -i "${KEY_FILE}" -P "${ASCP_PORT}" ${ASCP_OPTS} -l "${ASCP_MD5_RATE}" "${REMOTE_MD5_FILE_PATH}" "${LOCAL_DEST_DIR}"
+
+    # Check if ascp command failed or file wasn't created
+    if [ $? -ne 0 ] || [ ! -f "${LOCAL_MD5_FILE_PATH}" ]; then
+        log "ERROR: Failed to download or find MD5 checksum file '${MD5_FILENAME}' using ascp."
+        log "Check remote path: ${REMOTE_MD5_FILE_PATH}"
+        log "Check Aspera connection and key file '${KEY_FILE}' permissions."
+        exit 1
+    fi
+    log "MD5 checksum file '${MD5_FILENAME}' downloaded successfully."
+fi
+
+# 3. Read MD5 checksums from the file into a Bash associative array
+#    Requires Bash 4.0+ for declare -A
+declare -A md5_map
+log "Reading MD5 checksums from ${LOCAL_MD5_FILE_PATH}..."
+
+# Check if the MD5 file is readable
+if [ ! -r "${LOCAL_MD5_FILE_PATH}" ]; then
+    log "ERROR: Cannot read MD5 checksum file '${LOCAL_MD5_FILE_PATH}'. Check permissions."
+    exit 1
+fi
+
+# Parse the file using awk: Default whitespace delimiter (handles spaces/tabs), requires exactly 2 fields (NF==2).
+# Column 1 ($1) = checksum (value), Column 2 ($2) = filename (key).
+# Handles potential Windows line endings (\r).
+log "Parsing ${MD5_FILENAME} using default whitespace separation (col1=md5, col2=filename)..."
+eval "$(awk 'NF==2 { gsub(/\r$/,""); printf "md5_map[\"%s\"]=\"%s\"\n", $2, $1 }' "${LOCAL_MD5_FILE_PATH}")"
+
+# Check if the map loading was successful (map has entries)
+if [ ${#md5_map[@]} -eq 0 ]; then
+    log "WARNING: MD5 map is empty after parsing '${LOCAL_MD5_FILE_PATH}'."
+    log "Please verify the file format. Expected format per line:"
+    log "<md5sum><ONE_OR_MORE_SPACES_OR_TABS><filename>"
+    log "Example: 777ced2484f26c79f49c770073dcf0e1    merge_10.filter.vcf.gz"
+    log "Check the file content using: head '${LOCAL_MD5_FILE_PATH}'"
+    log "Continuing without checksums in memory, verification might fail..."
+    # Consider exiting if checksums are critical:
+    # exit 1
+fi
+log "Loaded ${#md5_map[@]} checksum entries into memory."
+
+
+# 4. Loop through the specified file numbers, download, and verify MD5
+log "Starting downloads for files merge_${START_NUM}-${END_NUM}.filter.vcf.gz..."
+download_failed=0 # Counter for failed downloads
+
 for i in $(seq ${START_NUM} ${END_NUM})
 do
-    # Construct the full remote file path
-    REMOTE_FILE_PATH="${REMOTE_USER_HOST}:${REMOTE_BASE_DIR}/merge_${i}.filter.vcf.gz"
+    # Construct remote and local file paths/names for this iteration
     LOCAL_FILENAME="merge_${i}.filter.vcf.gz"
+    REMOTE_FILE_PATH="${REMOTE_USER_HOST}:${REMOTE_BASE_DIR}/${LOCAL_FILENAME}"
     LOCAL_FILE_PATH="${LOCAL_DEST_DIR}/${LOCAL_FILENAME}"
-    
-    # Check if the file already exists
+
+    # --- Look up Expected MD5 from the map ---
+    EXPECTED_MD5="${md5_map[$LOCAL_FILENAME]}" # Bash returns empty string if key not found
+
+    # Check if checksum was found in the map file for this specific filename
+    if [ -z "$EXPECTED_MD5" ]; then
+        log "INFO: No checksum found for '${LOCAL_FILENAME}' in '${MD5_FILENAME}'. MD5 check will be skipped for this file."
+    fi
+
+    # --- Check if file already exists locally ---
     if [ -f "${LOCAL_FILE_PATH}" ]; then
-        log "File ${LOCAL_FILENAME} already exists locally. Skipping download."
-        continue
+        log "File ${LOCAL_FILENAME} already exists locally."
+        # Only verify if we have an expected checksum for it
+        if [ -n "$EXPECTED_MD5" ]; then
+            log "Verifying MD5 checksum for existing file: ${LOCAL_FILENAME}..."
+            CALCULATED_MD5="" # Reset variable
+            if [[ "$MD5_CMD" == "md5 -q" ]]; then # macOS md5 command
+                 CALCULATED_MD5=$($MD5_CMD "${LOCAL_FILE_PATH}")
+            else # Linux md5sum command
+                 CALCULATED_MD5=$($MD5_CMD "${LOCAL_FILE_PATH}" | awk '{print $1}')
+            fi
+
+            # Check MD5 calculation success (less critical here as file exists)
+            if [ $? -ne 0 ]; then
+                 log "WARNING: Failed to calculate MD5 for existing file ${LOCAL_FILENAME}. Proceeding to re-download."
+            elif [ "${CALCULATED_MD5}" == "${EXPECTED_MD5}" ]; then
+                log "MD5 Check OK for existing file: ${LOCAL_FILENAME}. Skipping download."
+                continue # Move to the next file in the loop
+            else
+                log "WARNING: MD5 Mismatch for existing file ${LOCAL_FILENAME}!"
+                log "Expected: ${EXPECTED_MD5}"
+                log "Found:    ${CALCULATED_MD5}"
+                log "Proceeding to re-download the file."
+                # Optional: Remove the presumably corrupted existing file first
+                # log "Removing existing file before re-download..."
+                # rm -f "${LOCAL_FILE_PATH}"
+            fi
+        else
+            # File exists, but we don't have a checksum to verify it
+            log "Skipping MD5 check for existing file ${LOCAL_FILENAME} (checksum not found in map)."
+            log "Assuming existing file is correct. Skipping download."
+            continue # Move to the next file
+        fi
     fi
-    
-    # Just the filename for logging
+
+    # --- Initiate Download (if file doesn't exist or MD5 check failed) ---
     log "Initiating download for ${LOCAL_FILENAME}..."
-    
-    # Execute the ascp command
     ascp -i "${KEY_FILE}" -P "${ASCP_PORT}" ${ASCP_OPTS} -l "${ASCP_RATE}" "${REMOTE_FILE_PATH}" "${LOCAL_DEST_DIR}"
-    
-    # Check the exit status of the ascp command
-    if [ $? -eq 0 ]; then
+    ascp_exit_code=$? # Capture exit code
+
+    # --- Process Download Result ---
+    if [ ${ascp_exit_code} -eq 0 ]; then
         log "Successfully downloaded ${LOCAL_FILENAME}."
+
+        # --- Verify MD5 Checksum of newly downloaded file ---
+        if [ -n "$EXPECTED_MD5" ]; then
+             log "Verifying MD5 checksum for downloaded file: ${LOCAL_FILENAME}..."
+             CALCULATED_MD5="" # Reset variable
+             if [[ "$MD5_CMD" == "md5 -q" ]]; then # macOS md5 command
+                  CALCULATED_MD5=$($MD5_CMD "${LOCAL_FILE_PATH}")
+             else # Linux md5sum command
+                  CALCULATED_MD5=$($MD5_CMD "${LOCAL_FILE_PATH}" | awk '{print $1}')
+             fi
+
+             # Check if MD5 calculation command succeeded
+             if [ $? -ne 0 ]; then
+                  log "ERROR: Failed to calculate MD5 for downloaded file ${LOCAL_FILENAME}. Cannot verify integrity."
+                  # Consider treating this as a failure
+                  # download_failed=$((download_failed + 1))
+                  # Optional: remove the file since we can't verify it
+                  # log "Removing unverified file: ${LOCAL_FILE_PATH}"
+                  # rm -f "${LOCAL_FILE_PATH}"
+             elif [ "${CALCULATED_MD5}" == "${EXPECTED_MD5}" ]; then
+                 log "MD5 Check OK: ${LOCAL_FILENAME}"
+             else
+                 log "ERROR: MD5 Mismatch for downloaded file ${LOCAL_FILENAME}!"
+                 log "Expected: ${EXPECTED_MD5}"
+                 log "Calculated: ${CALCULATED_MD5}"
+                 log "The downloaded file might be corrupted!"
+                 download_failed=$((download_failed + 1))
+                 # Optional: Delete the corrupted file automatically
+                 # log "Deleting corrupted file: ${LOCAL_FILE_PATH}"
+                 # rm -f "${LOCAL_FILE_PATH}"
+                 # Optional: Exit the script immediately on first checksum failure
+                 # exit 1
+             fi
+        else
+            # Downloaded successfully, but no checksum available for verification
+            log "MD5 check skipped for ${LOCAL_FILENAME} (checksum not found in map)."
+        fi
+        # --- End MD5 Verification ---
+
     else
-        log "WARNING: Failed to download ${LOCAL_FILENAME}. Check ascp output/logs for details. Continuing with next file..."
-        # If you want the script to stop on the first error, uncomment the next line:
+        log "ERROR: Failed to download ${LOCAL_FILENAME} (ascp exited with code ${ascp_exit_code})."
+        log "Check ascp output/logs for details (e.g., ~/.aspera/var/log/)."
+        download_failed=$((download_failed + 1))
+        # Optional: Stop script on first download failure
         # exit 1
-    fi
-done
+    fi # End download success/fail check
 
-log "All download attempts finished."
+done # End loop through file numbers
 
-# Optional: Clean up the key file if desired
+# --- Final Summary ---
+log "All specified download attempts finished."
+if [ ${download_failed} -gt 0 ]; then
+    log "WARNING: ${download_failed} file(s) encountered errors during download or MD5 verification. Please review logs."
+    final_exit_code=1 # Indicate failure
+else
+    log "All downloads and verifications (where applicable) completed successfully."
+    final_exit_code=0 # Indicate success
+fi
+
+# Optional: Clean up the key file and MD5 file if desired (uncomment)
 # log "Removing key file '${KEY_FILE}'."
 # rm -f "${KEY_FILE}"
+# log "Removing MD5 file '${LOCAL_MD5_FILE_PATH}'."
+# rm -f "${LOCAL_MD5_FILE_PATH}"
 
-exit 0
+exit ${final_exit_code}
 ```
 
 ### 4.3 Data Exploration and Preparation
@@ -444,11 +613,13 @@ CrossMap.py vcf B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain filtered/merge_1
 #### 4.4.6 Variant Filtering Considerations
 
 Analysis of the dataset shows:
+
 - 80% of variants have MAF < 0.05
 - With MAF > 0.05 filter, expect ~ 14 million variants (~1 SNP per 164 bp)
 - This equals approximately 610 SNPs per 100kb window
 
 Consider additional filtering strategies based on analysis requirements:
+
 - Further MAF filtering if fewer variants are needed
 - Export to hapmap format and back to VCF
 - Filter based on genomic regions of interest
