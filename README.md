@@ -445,8 +445,8 @@ CrossMap.py vcf B73_RefGen_v4_to_Zm-B73-REFERENCE-NAM-5.0.chain filtered/merge_1
 
 Analysis of the dataset shows:
 - 80% of variants have MAF < 0.05
-- With MAF > 0.05 filter, expect ~56 million variants (~1 SNP per 40 bp)
-- This equals approximately 2,500 SNPs per 100kb window
+- With MAF > 0.05 filter, expect ~ 14 million variants (~1 SNP per 164 bp)
+- This equals approximately 610 SNPs per 100kb window
 
 Consider additional filtering strategies based on analysis requirements:
 - Further MAF filtering if fewer variants are needed
