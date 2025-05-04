@@ -178,34 +178,17 @@ bcftools stats schnable2023/schnable2023_chr10.vcf.gz > schnable2023_chr10.stats
 Analyze the metadata to identify teosinte and Tripsacum samples:
 
 ```bash
-# Fix metadata filename if needed
-mv schnable2023/schanble2023_metadata.tab schnable2023/schnable2023_metadata.tab
 
-# Extract non-maize samples from metadata
-grep -v "Z. mays subsp. mays" schnable2023/schnable2023_metadata.tab > non_maize_samples.tab
+# Taxonomic  distribution
+grep -v "Z. mays" schnable2023/schnable2023_metadata.tab | cut -f2 | grep -v "Species" | sort | uniq -c
 
-# Count species distribution
-grep -v "Z. mays subsp. mays" schnable2023/schnable2023_metadata.tab | cut -f2 | grep -v "Species" | sort | uniq -c
-
-# Create sample lists for each teosinte group
-grep "Z. mays subsp. mexicana" schnable2023/schnable2023_metadata.tab | cut -f1 > mexicana_samples.list
-grep "Z. mays subsp. parviglumis" schnable2023/schnable2023_metadata.tab | cut -f1 > parviglumis_samples.list
-grep "Z. diploperennis" schnable2023/schnable2023_metadata.tab | cut -f1 > diploperennis_samples.list
-grep "Z. luxurians" schnable2023/schnable2023_metadata.tab | cut -f1 > luxurians_samples.list
-grep "Z. nicaraguensis" schnable2023/schnable2023_metadata.tab | cut -f1 > nicaraguensis_samples.list
-grep "Z. perennis" schnable2023/schnable2023_metadata.tab | cut -f1 > perennis_samples.list
-grep "Tripsacum" schnable2023/schnable2023_metadata.tab | cut -f1 > tripsacum_samples.list
-
-# Create a unified teosinte reference sample list
-cat mexicana_samples.list parviglumis_samples.list diploperennis_samples.list \
-    luxurians_samples.list nicaraguensis_samples.list perennis_samples.list \
-    tripsacum_samples.list > teosinte_samples.list
+# Create wild_relative list
+grep -v "Z. mays" schnable2023/schnable2023_metadata.tab | cut -f1 | grep -v "ID">> wild_relatives_id.list
 
 # Add B73 to the reference sample list
-grep "B73" schnable2023/schnable2023_metadata.tab | cut -f1 >> teosinte_samples.list
-
-# Create a final sorted and deduplicated sample list
-sort teosinte_samples.list | uniq > teosinte_ref_samples.list
+grep "B73" schnable2023/schnable2023_metadata.tab \
+  | cut -f1 | cat - wild_relatives_id.list \
+  | sort| uniq >  wideseq_ref_id.list      # Create a final sorted and deduplicated sample list
 ```
 
 #### 4.3.3 Comparison with Chen2022 Dataset
@@ -214,7 +197,6 @@ Identify overlapping samples between Schnable2023 and Chen2022:
 
 ```bash
 # Check which Chen2022 samples are in Schnable2023
-grep -w -f chen2022_id.list schnable2023_id.list > overlapping_samples.list
 grep -w -f chen2022_id.list schnable2023_id.list | wc -l
 
 # Check which reference samples are in Schnable2023
@@ -229,14 +211,16 @@ Create a script to extract the teosinte samples and apply MAF filtering:
 
 ```bash
 #!/bin/bash
-# process_teosinte_variants.sh
+# get_variants_from_schnable2023.sh
 #
 # Extracts teosinte and Tripsacum samples from Schnable2023 VCF files
 # and applies MAF filtering.
 
 INPUT_DIR="./schnable2023"
-OUTPUT_DIR="./teosinte_variants"
-SAMPLE_LIST="teosinte_ref_samples.list"
+OUTPUT_DIR="./wideseq_ref"
+SAMPLE_LIST="wideseq_ref_id.list"
+
+# This will bias against huehue 
 MAF_THRESHOLD="0.05"
 
 # Create output directory
@@ -248,7 +232,7 @@ for chr in {1..10}; do
     
     # Input and output file paths
     INPUT_VCF="${INPUT_DIR}/schnable2023_chr${chr}.vcf.gz"
-    OUTPUT_VCF="${OUTPUT_DIR}/teosinte_chr${chr}.vcf.gz"
+    OUTPUT_VCF="${OUTPUT_DIR}/wideseq_chr${chr}.vcf.gz"
     
     # Extract samples and apply MAF filtering
     bcftools view -S ${SAMPLE_LIST} --min-af ${MAF_THRESHOLD}:minor ${INPUT_VCF} -Oz -o ${OUTPUT_VCF}
@@ -262,68 +246,6 @@ done
 echo "All chromosomes processed."
 ```
 
-#### 4.4.2 Creating Minimal VCF Files
-
-To reduce file sizes and simplify processing, create minimal VCF files containing only genotype (GT) information:
-
-```bash
-#!/bin/bash
-# create_minimal_vcf.sh
-#
-# Creates minimal VCF files containing only GT information from the
-# filtered teosinte variants.
-
-INPUT_DIR="./teosinte_variants"
-OUTPUT_DIR="./teosinte_minimal_vcf"
-
-# Create output directory
-mkdir -p ${OUTPUT_DIR}
-
-# Create a minimal header template
-cat > ${OUTPUT_DIR}/minimal_header.txt << EOL
-##fileformat=VCFv4.2
-##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
-EOL
-
-# Process each chromosome
-for chr in {1..10}; do
-    echo "Processing chromosome ${chr}..."
-    
-    # Input and output file paths
-    INPUT_VCF="${INPUT_DIR}/teosinte_chr${chr}.vcf.gz"
-    OUTPUT_VCF="${OUTPUT_DIR}/teosinte_chr${chr}.minimal.vcf.gz"
-    
-    # Extract contig lines from the original header
-    bcftools view -h ${INPUT_VCF} | grep "^##contig" > ${OUTPUT_DIR}/contigs_${chr}.txt
-    
-    # Extract samples line from the header
-    bcftools view -h ${INPUT_VCF} | grep "^#CHROM" > ${OUTPUT_DIR}/samples_${chr}.txt
-    
-    # Create complete header for this chromosome
-    cat ${OUTPUT_DIR}/minimal_header.txt ${OUTPUT_DIR}/contigs_${chr}.txt ${OUTPUT_DIR}/samples_${chr}.txt > ${OUTPUT_DIR}/header_${chr}.txt
-    
-    # Remove all INFO fields and FORMAT fields except GT
-    bcftools annotate -x INFO,^FORMAT/GT ${INPUT_VCF} -Ov -o ${OUTPUT_DIR}/data_${chr}.vcf
-    
-    # Replace header with minimal header
-    bcftools reheader -h ${OUTPUT_DIR}/header_${chr}.txt ${OUTPUT_DIR}/data_${chr}.vcf | \
-    bcftools view -Oz -o ${OUTPUT_VCF}
-    
-    # Index the output file
-    bcftools index ${OUTPUT_VCF}
-    
-    # Clean up temporary files
-    rm ${OUTPUT_DIR}/contigs_${chr}.txt ${OUTPUT_DIR}/samples_${chr}.txt ${OUTPUT_DIR}/header_${chr}.txt ${OUTPUT_DIR}/data_${chr}.vcf
-    
-    echo "Completed chromosome ${chr}"
-done
-
-# Clean up remaining temporary files
-rm ${OUTPUT_DIR}/minimal_header.txt
-
-echo "All files processed successfully."
-```
-
 #### 4.4.3 Variant Statistics
 
 Calculate statistics for the filtered variants to assess their distribution and utility for ancestry analysis:
@@ -334,7 +256,7 @@ Calculate statistics for the filtered variants to assess their distribution and 
 #
 # Calculates statistics for the filtered teosinte variants.
 
-INPUT_DIR="./teosinte_minimal_vcf"
+INPUT_DIR="./wideseq_ref"
 OUTPUT_DIR="./stats"
 
 # Create output directory
@@ -348,13 +270,13 @@ for chr in {1..10}; do
     echo "Calculating statistics for chromosome ${chr}..."
     
     # Input file
-    INPUT_VCF="${INPUT_DIR}/teosinte_chr${chr}.minimal.vcf.gz"
+    INPUT_VCF="${INPUT_DIR}/wideseq_chr${chr}.vcf.gz"
     
     # Calculate statistics
-    bcftools stats ${INPUT_VCF} > ${OUTPUT_DIR}/teosinte_chr${chr}.stats
+    bcftools stats ${INPUT_VCF} > ${OUTPUT_DIR}/wideseq_chr${chr}.stats
     
     # Count variants
-    variants=$(grep "number of SNPs:" ${OUTPUT_DIR}/teosinte_chr${chr}.stats | awk '{print $6}')
+    variants=$(grep "number of SNPs:" ${OUTPUT_DIR}/wideseq_chr${chr}.stats | awk '{print $6}')
     total_variants=$((total_variants + variants))
     
     echo "Chromosome ${chr}: ${variants} variants"
@@ -363,11 +285,38 @@ done
 echo "Total variants across all chromosomes: ${total_variants}"
 
 # Calculate average variant density per 100kb
-genome_size=2300000000  # Approximate maize genome size in bp
+genome_size=2131846805  # Zm-B73-REFERENCE-NAM-5.0 nuclear chromosome length in bp
 density_per_100kb=$(echo "scale=2; ${total_variants} * 100000 / ${genome_size}" | bc)
 
 echo "Average variant density: ${density_per_100kb} variants per 100kb"
 ```
+
+Giving the following output
+```
+Calculating statistics for chromosome 1...
+Chromosome 1: 4014996 variants
+Calculating statistics for chromosome 2...
+Chromosome 2: 3107336 variants
+Calculating statistics for chromosome 3...
+Chromosome 3: 3134513 variants
+Calculating statistics for chromosome 4...
+Chromosome 4: 3536756 variants
+Calculating statistics for chromosome 5...
+Chromosome 5: 2884437 variants
+Calculating statistics for chromosome 6...
+Chromosome 6: 2148207 variants
+Calculating statistics for chromosome 7...
+Chromosome 7: 2304091 variants
+Calculating statistics for chromosome 8...
+Chromosome 8: 2287674 variants
+Calculating statistics for chromosome 9...
+Chromosome 9: 2185739 variants
+Calculating statistics for chromosome 10...
+Chromosome 10: 2058789 variants
+Total variants across all chromosomes: 27662538
+Average variant density: 1297.58 variants per 100kb
+```
+
 
 ## 5. Integration with WideSeq Analysis
 
@@ -375,9 +324,12 @@ The teosinte reference variant set constructed from Schnable2023 can be directly
 
 For WideSeq analysis:
 
-1. Use the minimal VCF files as the reference panel for ancestry calling
+1. Use the wideseq.vcf.gz files as the reference panel for ancestry calling
+2. Use the alignments in  /rsstu/users/r/rrellan/DOE_CAREER/BZea/mapped_bwa/filtered_S2/sorted/
 2. Split the analysis by chromosome for parallel processing
-3. Generate bin frequencies and calculate Jaccard indices for similarity analysis
+3. Generate 100K bin frequencies. 
+4. Call bin haplotype (REF, HET, ALT)
+5. Select markers in ALT haplotypes, with this subset calculate jaccaard distances with the wideq_ref samples
 4. Merge results for genome-wide visualization
 
 ## 6. References
