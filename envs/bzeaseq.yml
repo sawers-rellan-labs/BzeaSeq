@@ -42,8 +42,11 @@ dependencies:
   - conda-forge::matplotlib=3.10.1
   - conda-forge::seaborn=0.13.2
   - conda-forge::biopython=1.85
-  
-    # R libraries
+
+  #  c++ library for R installation in Hazel
+  - conda-forge::libstdcxx-ng=12
+
+  # R libraries
   - conda-forge::r-tidyverse=2.0.0
   - conda-forge::r-data.table=1.17.0
   - conda-forge::r-ggplot2=3.5.2

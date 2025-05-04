@@ -9,7 +9,11 @@
   - [4.2 Data Acquisition](#42-data-acquisition)
   - [4.3 Data Exploration and Preparation](#43-data-exploration-and-preparation)
   - [4.4 Data Processing Pipeline](#44-data-processing-pipeline)
-- [5. Integration with WideSeq Analysis](#5-integration-with-wideseq-analysis)
+- [5. WideSeq Analysis Pipeline](#5-wideseq-analysis-pipeline)
+  - [5.1 Basic Analysis](#51-basic-analysis)
+  - [5.2 Ancestry Analysis](#52-ancestry-analysis)
+  - [5.3 Phylogenetic Analysis](#53-phylogenetic-analysis)
+  - [5.4 Introgression Visualization](#54-introgression-visualization)
 - [6. References](#6-references)
 
 This repository contains pipelines for constructing a Teosinte reference variant set from the Schnable2023 dataset and performing ancestry segment calling using the WideSeq approach.
@@ -20,7 +24,7 @@ This project consists of two main pipelines:
 
 1. **Teosinte Reference Variant Set Construction**: Processes variant data from teosinte samples in the Schnable2023 study, including sample filtering based on taxonomy and variant filtering based on minor allele frequency.
 
-2. **WideSeq Analysis Pipeline**: Processes WideSeq data to identify ancestry segments by aligning to B73, calling SNPs, comparing to the teosinte reference variant set, and calculating bin frequencies and haplotype similarities.
+2. **WideSeq Analysis Pipeline**: Processes WideSeq data to identify ancestry segments by aligning to B73, calling SNPs, comparing to the teosinte reference variant set, and calculating bin frequencies and haplotype similarities. Includes advanced phylogenetic analysis and introgression pattern visualization.
 
 Both pipelines are optimized for high-performance computing environments using LSF job scheduling.
 
@@ -29,12 +33,19 @@ Both pipelines are optimized for high-performance computing environments using L
 - `scripts/`: Contains all pipeline scripts
   - `teosinte_variants/`: Scripts for processing Schnable2023 teosinte variants
   - `wideseq/`: Scripts for WideSeq ancestry segment calling
+  - `phylogeny/`: Scripts for phylogenetic analysis
+  - `visualization/`: Scripts for introgression pattern visualization
   - `utilities/`: Helper scripts for monitoring and job management
 - `data/`: Input data
   - `reference/`: B73 reference genome (v5)
   - `schnable2023/`: Schnable2023 variant data
   - `wideseq_fastq/`: WideSeq sequencing data
 - `results/`: Pipeline outputs
+  - `variants/`: Filtered variant calls
+  - `bins/`: Bin-level ancestry calls
+  - `jaccard/`: Jaccard similarity results
+  - `phylogeny/`: UPGMA tree and distance matrices
+  - `heatmaps/`: Introgression pattern visualizations
 - `logs/`: Log files from pipeline runs
 - `envs/`: Conda environment files
 - `docs/`: Documentation
@@ -54,31 +65,57 @@ graph TD
     end
 
     subgraph "WideSeq Analysis Pipeline"
-        B1[WideSeq Raw FASTQ] --> B2[Trimmomatic]
-        B2 --> B3["BWA Mapping (by chromosome)"]
-        B3 --> B4["BCFtools mpileup (by chromosome)"]
-        B4 --> B5["Filter with Teosinte Reference (by chromosome)"]
+        B1[WideSeq Pre-aligned BAMs] --> B2[Extract Teosinte Positions]
+        B2 --> B3["Variant Calling (by chromosome)"]
+        B3 --> B4["Filter with Teosinte Reference (by chromosome)"]
         
-        A8 -.-> B5
+        A8 -.-> B4
         
-        B5 --> B6["Bin Frequency Calculation (by chromosome)"]
-        B5 --> B7["Extract Non-reference SNPs (by chromosome)"]
-        B7 --> B8["Reference Panel Subsetting (by chromosome)"]
-        B8 --> B9["Jaccard Index Calculation (by chromosome)"]
+        B4 --> B5["Create 100Kb Bins"]
+        B5 --> B6["Calculate Bin Frequencies"]
+        B6 --> B7["Call Bin Genotypes (REF/HET/ALT)"]
         
-        B6 --> B10[Merge Bin Frequencies]
-        B9 --> B11[Merge Jaccard Results]
+        B7 --> B8[Merge Bin Results]
+        B7 --> B9["Extract Non-REF Variants"]
         
-        B10 --> B12[Genome-wide Visualization]
+        B9 --> B10["Calculate Jaccard Similarity"]
+        B10 --> B11[Identify Top Matches]
+        
+        B8 --> B12[Genome-wide Visualization]
         B11 --> B13[Top Matches Visualization]
         
-        B12 --> B14[Final Report]
+        B12 --> B14[Basic Analysis Report]
         B13 --> B14
     end
-  
+    
+    subgraph "Phylogenetic Analysis"
+        C1[Jaccard Similarities] --> C2[Specialized Distance Matrix]
+        C2 --> C3[UPGMA Tree Construction]
+        C3 --> C4[Dendrogram Visualization]
+        C3 --> C5[iTOL Annotations]
+        C4 --> C6[Phylogenetic Report]
+        C5 --> C6
+    end
+    
+    subgraph "Introgression Visualization"
+        D1[Bin Genotypes] --> D2[Reorder by UPGMA Tree]
+        C3 -.-> D2
+        D2 --> D3[Detailed Genotype Heatmap]
+        D2 --> D4[Chromosome-level Heatmap]
+        D3 --> D5[Composite Visualization]
+        D4 --> D5
+        D5 --> D6[Introgression Pattern Report]
+    end
+    
+    B14 --- C1
+    C6 --- D1
+    D6 --> E1[Final Comprehensive Report]
     
     style A8 fill:#f9f,stroke:#333,stroke-width:2px
     style B14 fill:#f9f,stroke:#333,stroke-width:2px
+    style C6 fill:#f9f,stroke:#333,stroke-width:2px
+    style D6 fill:#f9f,stroke:#333,stroke-width:2px
+    style E1 fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
 ## 4. Teosinte Reference Variant Set Construction
@@ -178,8 +215,7 @@ bcftools stats schnable2023/schnable2023_chr10.vcf.gz > schnable2023_chr10.stats
 Analyze the metadata to identify teosinte and Tripsacum samples:
 
 ```bash
-
-# Taxonomic  distribution
+# Taxonomic distribution
 grep -v "Z. mays" schnable2023/schnable2023_metadata.tab | cut -f2 | grep -v "Species" | sort | uniq -c
 
 # Create wild_relative list
@@ -291,7 +327,7 @@ density_per_100kb=$(echo "scale=2; ${total_variants} * 100000 / ${genome_size}" 
 echo "Average variant density: ${density_per_100kb} variants per 100kb"
 ```
 
-Giving the following output
+Giving the following output:
 ```
 Calculating statistics for chromosome 1...
 Chromosome 1: 4014996 variants
@@ -317,20 +353,155 @@ Total variants across all chromosomes: 27662538
 Average variant density: 1297.58 variants per 100kb
 ```
 
+## 5. WideSeq Analysis Pipeline
 
-## 5. Integration with WideSeq Analysis
+### 5.1 Basic Analysis
 
-The teosinte reference variant set constructed from Schnable2023 can be directly integrated with the WideSeq analysis pipeline. The B73v5-aligned variants eliminate the need for liftover and ensure compatibility with modern sequencing datasets.
+The WideSeq analysis pipeline processes pre-aligned BAM files to identify ancestry segments by comparing to the teosinte reference variant set.
 
-For WideSeq analysis:
+#### 5.1.1 Variant Calling and Filtering
 
-1. Use the wideseq.vcf.gz files as the reference panel for ancestry calling
-2. Use the alignments in  /rsstu/users/r/rrellan/DOE_CAREER/BZea/mapped_bwa/filtered_S2/sorted/
-2. Split the analysis by chromosome for parallel processing
-3. Generate 100K bin frequencies. 
-4. Call bin haplotype (REF, HET, ALT)
-5. Select markers in ALT haplotypes, with this subset calculate jaccaard distances with the wideq_ref samples
-4. Merge results for genome-wide visualization
+The pipeline starts by calling variants from pre-aligned BAM files and filtering them against the teosinte reference panel:
+
+```bash
+# Call variants for each chromosome
+bcftools mpileup -f ${REFERENCE_DIR}/Zm-B73-REFERENCE-NAM-5.0.fa \
+    -r ${chrom} ${SORTED_BAMS_DIR}/${sample}.bam | \
+    bcftools call -m -Oz -o ${OUTPUT_DIR}/variants/${sample}.${chrom}.vcf.gz
+
+# Filter variants to those in the teosinte panel
+bcftools view -T ${OUTPUT_DIR}/variants/teosinte_${chrom}_positions.txt \
+    ${OUTPUT_DIR}/variants/${sample}.${chrom}.vcf.gz \
+    -Oz -o ${OUTPUT_DIR}/filtered/${sample}.${chrom}.filtered.vcf.gz
+```
+
+#### 5.1.2 Bin Creation and Genotype Calling
+
+Next, the pipeline creates 100Kb bins across the genome and calculates allele frequencies within each bin:
+
+```bash
+# Create 100Kb bins
+bedtools makewindows -g <(echo -e "${chrom}\t${chr_size}") -w 100000 \
+    > ${OUTPUT_DIR}/bins/${sample}.${chrom}.bins.bed
+
+# Calculate bin frequencies
+bedtools map -a ${OUTPUT_DIR}/bins/${sample}.${chrom}.bins.bed \
+    -b ${OUTPUT_DIR}/bins/${sample}.${chrom}.variants.bed \
+    -c 6 -o collapse > ${OUTPUT_DIR}/bins/${sample}.${chrom}.gt_per_bin.txt
+```
+
+The pipeline then processes these frequencies to call genotypes for each bin:
+- **REF**: ≥70% reference allele frequency
+- **HET**: Mixed reference/alternate alleles
+- **ALT**: ≥70% alternate allele frequency
+- **NO_DATA**: Insufficient variants for classification
+
+#### 5.1.3 Jaccard Similarity Calculation
+
+For regions with non-reference genotypes (HET or ALT), the pipeline calculates Jaccard similarity with teosinte accessions:
+
+```bash
+# Extract non-reference variants
+bedtools intersect -a ${OUTPUT_DIR}/bins/${sample}.${chrom}.variants.bed \
+    -b ${OUTPUT_DIR}/bins/${sample}.${chrom}.non_ref_bins.bed \
+    > ${OUTPUT_DIR}/bins/${sample}.${chrom}.non_ref_variants.bed
+
+# Calculate Jaccard similarity with teosinte panel
+# (Code for Jaccard calculation implemented in Python)
+```
+
+### 5.2 Ancestry Analysis
+
+The basic analysis results are combined to produce ancestry insights:
+
+1. **Bin-level Ancestry Calls**: Genome-wide map of bin genotypes (REF/HET/ALT)
+2. **Top Matches**: Identification of teosinte accessions with highest similarity
+3. **Chromosome-level Statistics**: Distribution of ancestry segments by chromosome
+4. **Visualization**: Genome-wide plots of ancestry segments
+
+### 5.3 Phylogenetic Analysis
+
+The WideSeq pipeline includes advanced phylogenetic analysis to understand evolutionary relationships:
+
+#### 5.3.1 Specialized Distance Matrix
+
+A specialized distance matrix is calculated with different methods depending on comparison type:
+
+1. **Teosinte-to-Teosinte distances**: Calculated using all markers
+2. **NIL-to-NIL distances**: Calculated using all markers
+3. **NIL-to-Teosinte distances**: Calculated using only markers in NON-REF bins of each NIL
+
+```bash
+# Calculate specialized distance matrix
+# (Implemented in Python with three distinct calculation methods)
+```
+
+#### 5.3.2 UPGMA Tree Construction
+
+The specialized distance matrix is used to construct a UPGMA (Unweighted Pair Group Method with Arithmetic Mean) tree:
+
+```bash
+# Compute linkage matrix using UPGMA (average linkage)
+Z = linkage(condensed_dist, method='average')
+
+# Apply optimal leaf ordering
+Z_ordered = optimal_leaf_ordering(Z, condensed_dist)
+```
+
+#### 5.3.3 Tree Visualization and Export
+
+The resulting tree is visualized and exported in various formats:
+
+```bash
+# Generate dendrogram visualization
+dendrogram(Z_ordered, labels=sample_names, ...)
+
+# Export Newick format for external tools
+# (Code to generate Newick format)
+
+# Create iTOL annotation files for interactive visualization
+# (Code to generate iTOL annotations)
+```
+
+### 5.4 Introgression Visualization
+
+The final step is creating detailed visualizations of introgression patterns:
+
+#### 5.4.1 Genotype Heatmap Ordered by UPGMA
+
+The bin genotypes are visualized as a heatmap, with samples ordered according to the UPGMA tree:
+
+```bash
+# Reorder samples based on UPGMA clustering
+ordered_indices = leaves_list(Z_ordered)
+ordered_samples = [sample_names[i] for i in ordered_indices]
+
+# Create detailed genotype heatmap
+# (Code to generate detailed heatmap with samples in UPGMA order)
+```
+
+#### 5.4.2 Chromosome-level Aggregation
+
+For a higher-level overview, bin genotypes are aggregated by chromosome:
+
+```bash
+# Calculate NON-REF bin percentage by chromosome
+# (Code to aggregate bin genotypes by chromosome)
+
+# Create chromosome-level heatmap
+# (Code to generate chromosome-level heatmap)
+```
+
+#### 5.4.3 Composite Visualization
+
+A composite visualization combines the UPGMA dendrogram with the chromosome-level heatmap:
+
+```bash
+# Create composite visualization
+# (Code to create a figure with both dendrogram and heatmap)
+```
+
+This comprehensive visualization reveals how evolutionary relationships correlate with introgression patterns across the genome.
 
 ## 6. References
 
