@@ -255,42 +255,6 @@ done
 echo "All chromosomes processed."
 ```
 
-#### 4.4.2 Create Site List for GATK
-
-Extract positions from the filtered VCF files to create an interval list for GATK CollectAllelicCounts:
-
-```bash
-#!/bin/bash
-# create_interval_list.sh
-#
-# Creates interval list files from filtered VCF files for GATK CollectAllelicCounts.
-
-INPUT_DIR="./wideseq_ref"
-OUTPUT_DIR="./intervals"
-
-# Create output directory
-mkdir -p ${OUTPUT_DIR}
-
-# Process each chromosome
-for chr in {1..10}; do
-    echo "Creating interval list for chromosome ${chr}..."
-    
-    # Input VCF file
-    INPUT_VCF="${INPUT_DIR}/wideseq_chr${chr}.vcf.gz"
-    
-    # Extract positions
-    bcftools query -f '%CHROM\t%POS\t%POS\t+\t%CHROM:%POS\n' ${INPUT_VCF} > \
-        ${OUTPUT_DIR}/wideseq_chr${chr}.interval_list
-    
-    echo "Completed chromosome ${chr}"
-done
-
-# Concatenate all interval lists (optional)
-cat ${OUTPUT_DIR}/wideseq_chr*.interval_list > ${OUTPUT_DIR}/wideseq_all.interval_list
-
-echo "All interval lists created."
-```
-
 #### 4.4.3 Variant Statistics
 
 Calculate statistics for the filtered variants to assess their distribution and utility for ancestry analysis:
