@@ -180,6 +180,7 @@ picard FixVcfHeader \
 ### 5.2 Sample and Variant Filtering
 
 Extract only samples of interest and apply filtering:
+<<<<<<< HEAD
 Note from  https://github.com/samtools/bcftools/issues/1807
 
  Also note that one must be careful when sample subsetting and filtering is performed in a single command 
@@ -198,6 +199,12 @@ bcftools view -S wideseq_ref_id.list  \
   -o ../Zea-vardb/chr10.wideseq.v4.vcf.gz
 
 bcftools view -q 0.05:minor \
+=======
+
+```bash
+# Select samples and filter for variants with MAF > 0.05
+bcftools view -q 0.05:minor -S wideseq_ref_id.list --min-ac=1 \
+>>>>>>> refs/remotes/origin/main
   ../Zea-vardb/merge_10.header.vcf.gz \
   -o ../Zea-vardb/chr10.wideseq.v4.vcf.gz
 ```

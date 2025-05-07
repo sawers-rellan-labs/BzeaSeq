@@ -292,6 +292,7 @@ h2 <- create_hist(non_zero_bins, "Klog", "K-means on log10 transformed ALT_FREQ"
 h3 <- create_hist(non_zero_bins, "Kasin", "K-means on arcsin transformed ALT_FREQ")
 h4 <- create_hist(non_zero_bins, "GMM", "Gaussian mixture model on normalized ALT_FREQ")
 
+
 # Display all histograms
 ggpubr::ggarrange(h1, h2, h3, h4, ncol = 2)
 ```
@@ -397,7 +398,7 @@ ggpubr::ggarrange(p1, p2, p3, p4, ncol = 1, common.legend = TRUE)
 create_tile <- function(data, method_col, title) {
 
   data %>%
-    mutate(POS = BIN_POS * BIN_SIZE) %>%
+    mutate(POS = POS_BIN * BIN_SIZE) %>%
     ggplot(aes(x = POS, y = 1, fill = .data[[method_col]])) +
     geom_tile() +
     facet_wrap( .~CONTIG, ncol = 1, strip.position = "left") +
@@ -629,7 +630,7 @@ We can save the final results for further analysis:
 ```{r save-results, eval=FALSE}
 # Extract relevant columns
 results <- read_freq %>%
-  select(BIN_POS, n, NCOUNT, ALT_COUNT, ALT_FREQ, ALT_FREQ_NORM, K)
+  select(BIN_POS, VARIANT_COUNT, READ_COUNT, ALT_COUNT, ALT_FREQ, ALT_FREQ_NORM, GENOTYPE)
 
 # Save to file with bin size in the filename
 output_file <- paste0("maize_bin_ancestry_", BIN_SIZE_LABEL, ".csv")
