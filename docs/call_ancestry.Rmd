@@ -1,5 +1,5 @@
 ---
-title: "Maize Genome Ancestry Analysis with Adjustable Bin Size"
+title: "Teosinte Introgression Lines Ancestry Analysis by bins"
 author: "Maize Genetics Lab"
 date: "`r Sys.Date()`"
 output:
@@ -20,24 +20,8 @@ knitr::opts_chunk$set(
   fig.height = 6,
   dpi = 300
 )
-```
-
-## Analysis Parameters
-
-You can adjust the bin size by changing the parameter below:
-
-```{r parameters}
-# Set the bin size in base pairs (default: 100,000 = 100kb)
-BIN_SIZE <- 1000000  # Change this value to adjust bin size
-
-# Bin size in user-friendly format for plot labels
-if (BIN_SIZE >= 1000000) {
-  BIN_SIZE_LABEL <- paste0(BIN_SIZE/1000000, "Mb")
-} else if (BIN_SIZE >= 1000) {
-  BIN_SIZE_LABEL <- paste0(BIN_SIZE/1000, "kb")
-} else {
-  BIN_SIZE_LABEL <- paste0(BIN_SIZE, "bp")
-}
+BIN_SIZE=1000000
+BIN_SIZE_LABEL<-"1Mb"
 ```
 
 ## Overview
@@ -71,35 +55,12 @@ library(tibble)       # Modern data frames
 
 ## Data Preparation
 
-First, we read the allelic counts data and create bins of the specified size:
+First, we read the binned allelic counts:
 
-```{r read-data}
-# Read the allelic counts data
-read_count <- read.table("~/Desktop/PN17_SID1632.allelicCounts.tsv", 
-                         comment.char = "@", header = TRUE)
-
-# Display dimensions of the input data
-nrow(read_count)
-
-# Examine distribution of alternative allele counts
-with(read_count, table(ALT_COUNT))
-```
 
 ```{r create-bins}
 # Create bins of specified size and calculate summary statistics for each bin
-read_freq <- read_count %>%
-  # Create position bins by dividing positions into bins of size BIN_SIZE
-  mutate(POS_BIN = ceiling(POSITION/BIN_SIZE) %>% as.integer()) %>%
-  # Group by these bins
-  group_by(POS_BIN) %>%
-  # Calculate statistics for each bin
-  summarise(
-    n = n(),                                   # Number of variants in bin
-    NCOUNT = (sum(ALT_COUNT) + sum(REF_COUNT)), # Total read count
-    ALT_COUNT = sum(ALT_COUNT),                # Sum of alternative allele counts
-    ALT_FREQ = sum(ALT_COUNT)/NCOUNT           # Alternative allele frequency
-  )
-
+read_freq <- read.table("~/DEsktop/PN17_SID1632_bin_genotypes.tsv",header=TRUE)
 # Display first few rows of the binned data
 head(read_freq)
 
@@ -213,10 +174,11 @@ ggpubr::ggarrange(p1, p2, p3, common.legend = TRUE)
 We apply K-means clustering to each version of the normalized data for the non-zero bins, using k=3:
 
 ```{r kmeans-clustering-nonzero}
+K=3
 # Apply K-means clustering with k=3 to each transformation for non-zero bins
-non_zero_bins$K <- as.factor(Ckmeans.1d.dp(non_zero_bins$ALT_FREQ_NORM, 3)$cluster)
-non_zero_bins$Klog <- as.factor(Ckmeans.1d.dp(non_zero_bins$log, 3)$cluster)
-non_zero_bins$Kasin <- as.factor(Ckmeans.1d.dp(non_zero_bins$asin, 3)$cluster)
+non_zero_bins$K <- as.factor(Ckmeans.1d.dp(non_zero_bins$ALT_FREQ_NORM, K)$cluster)
+non_zero_bins$Klog <- as.factor(Ckmeans.1d.dp(non_zero_bins$log, K)$cluster)
+non_zero_bins$Kasin <- as.factor(Ckmeans.1d.dp(non_zero_bins$asin, K)$cluster)
 
 # Function to relabel clusters as REF, HET, ALT based on ALT_FREQ_NORM
 relabel_clusters <- function(clusters, data) {
@@ -305,7 +267,7 @@ cluster_summary %>%
       method == "K" ~ "K-means (raw)",
       method == "Klog" ~ "K-means (log10)",
       method == "Kasin" ~ "K-means (arcsin)",
-      method == "Kgmm" ~ "Gaussian Mixture",
+      method == "GMM" ~ "Gaussian Mixture",
       TRUE ~ method
     )
   ) %>%
@@ -362,6 +324,10 @@ for (method in c("K", "Klog", "Kasin", "Kgmm")) {
   read_freq[[method]][zero_idx] <- "REF"
 }
 
+# The log transform hace nice normala data but high sensitivity to HET
+# so I'decide to change thos hets to REF
+read_freq$Klog[read_freq$Klog=="HET"] <- "REF"
+
 # Verify the merging worked correctly
 cat("Final cluster proportions for raw K-means:\n")
 table(read_freq$K) %>% prop.table() %>% round(3)
@@ -408,13 +374,16 @@ create_scatter <- function(data, method_col, title) {
   data %>%
     mutate(POS = POS_BIN * BIN_SIZE) %>%
     ggplot(aes(x = POS, y = ALT_FREQ_NORM, col = .data[[method_col]])) +
+        labs(title = title, x = "Position (bp)", y = "ALT_FREQ_NORM", color = "Genotype") +
     geom_point(size = 1, alpha = 0.7) +
     scale_color_manual(values = pal) +
-    labs(title = title, x = "Position (bp)", y = "ALT_FREQ_NORM", color = "Genotype") +
+    facet_wrap(.~CONTIG,ncol=10, scales = "free_x", strip.position = "bottom") +
     theme_bw() +
     scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6))
 }
 
+read_freq$CONTIG <-factor(read_freq$CONTIG, levels= paste0("chr",1:10))
+  
 # Create scatter plots for each method
 p1 <- create_scatter(read_freq, "K", paste("K-means on normalized ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
 p2 <- create_scatter(read_freq, "Klog", paste("K-means on log10 transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
@@ -425,31 +394,41 @@ p4 <- create_scatter(read_freq, "Kgmm", paste("Gaussian mixture model on normali
 ggpubr::ggarrange(p1, p2, p3, p4, ncol = 1, common.legend = TRUE)
 ```
 
-```{r tile-plots, fig.height=3}
+```{r single_method_tile, fig.height=3}
 # Create a function for tile plots
-# create_tile <- function(data, method_col, title) {
-#   data %>%
-#     mutate(POS = POS_BIN * BIN_SIZE) %>%
-#     ggplot(aes(x = POS, y = 1, fill = .data[[method_col]])) +
-#     geom_tile() +
-#     scale_fill_manual(values = pal) +
-#     labs(title = title, x = "Chr 10 Position (bp)", fill = "Genotype") +
-#     theme_minimal() +
-#     theme(
-#       axis.text.y = element_blank(),
-#       axis.title.y = element_blank(),
-#       axis.ticks.y = element_blank()
-#     ) +
-#     scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6))
-# }
-# 
-# # Create tile plots for PN17_SID1632
-# create_tile(read_freq, "K", paste("ALT_FREQ (", BIN_SIZE_LABEL, " bins)"," Sample PN17_SID1632", sep=""))
+create_tile <- function(data, method_col, title) {
+
+  data %>%
+    mutate(POS = POS_BIN * BIN_SIZE) %>%
+    ggplot(aes(x = POS, y = 1, fill = .data[[method_col]])) +
+    geom_tile() +
+    facet_wrap( .~CONTIG, ncol = 1, strip.position = "left") +
+    scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6))+
+    scale_fill_manual(values = pal) +
+    labs(title = title, x = "Position (bp)", fill = "Genotype") +
+    ggpubr::theme_classic2() +
+    theme(
+      # legend.position = "top",
+      strip.background = element_blank(),
+      strip.text.y.left = element_text(angle = 0),
+      panel.spacing.y=unit(0.0, "lines"),
+      axis.line.y = element_blank(),
+      axis.text.y = element_blank(),
+      axis.title.y = element_blank(),
+      axis.ticks.y = element_blank()
+    ) 
+}
+
+# Create tile plots for PN17_SID1632
+# create_tile(read_freq, "GENOTYPE", paste("ALT_FREQ (", BIN_SIZE_LABEL, " bins)"," Sample PN17_SID1632", sep=""))
+
+create_tile(read_freq, "Klog", paste("ALT_FREQ (", BIN_SIZE_LABEL, " bins)"," Sample PN17_SID1632", sep=""))
+
 ```
 
 ### 3. Combined visualization of all methods
-, fig.height=12
-```{r tile-plots, fig.height=8}
+
+```{r tile-plots, fig.height=2}
 # Create a combined plot for all methods
 read_freq %>%
   tidyr::pivot_longer(cols = starts_with("K"), names_to = "method", values_to = "K") %>%
@@ -462,14 +441,22 @@ read_freq %>%
   ggplot(aes(x = POS, y = 1, fill = K)) +
   geom_tile() +
   scale_fill_manual(values = pal) +
-  facet_wrap(. ~ method, ncol = 1, strip.position = "left") +
+  facet_grid(method ~ CONTIG, scales = "free") +
   scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6)) +
   ggpubr::theme_classic2() +
   theme(
+    legend.position = "bottom",
     strip.background = element_blank(),
-    strip.text = element_text(size = 10, face = "bold"),
+    strip.text.x = element_text(hjust = 0),
+    strip.text.y = element_text(angle = 0, face = "bold"),
+    panel.spacing.x=unit(0.0, "lines"),
+    panel.spacing.y=unit(0.0, "lines"),
     axis.line.y = element_blank(),
     axis.text.y = element_blank(),
+    axis.line.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank(),
     axis.title.y = element_blank(),
     axis.ticks.y = element_blank()
   ) +
@@ -478,6 +465,7 @@ read_freq %>%
     x = "Genome Position (Mb)",
     fill = "Genotype"
   )
+
 ```
 
 ## Genotype Frequency Comparison
@@ -581,40 +569,47 @@ ggplot(agreement_df, aes(x = Method1, y = Method2, fill = Agreement)) +
 
 Let's look at where the methods disagree:
 
-```{r method-differences}
-# Compare the standard K-means method to others
-for (method in c("Klog", "Kasin", "Kgmm")) {
-  cat("\nDifferences between K and", method, ":\n")
-  print(table(K = read_freq$K, Other = read_freq[[method]]))
-}
-
-# Create a visualization of where methods disagree
+```{r method-differences,fig.height=2}
+# Create a visualization of where methods disagree, across all chromosomes
 disagreement_data <- read_freq %>%
   mutate(
     POS = POS_BIN * BIN_SIZE,
     # Check if all methods agree
-    agreement = ifelse(
+    agreement = factor(ifelse(
       K == Klog & K == Kasin & K == Kgmm,
       "All methods agree",
       "Methods disagree"
-    )
+    ), levels = c("All methods agree", "Methods disagree"))
   )
 
+# Create tile plot with chromosomes on facets
 ggplot(disagreement_data, aes(x = POS, y = 1, fill = agreement)) +
   geom_tile() +
-  scale_fill_manual(values = c("darkred", "darkgreen")) +
-  labs(
-    title = paste("Regions of Agreement/Disagreement Between Methods (", BIN_SIZE_LABEL, " bins)", sep=""),
-    x = "Position (Mb)",
-    fill = NULL
-  ) +
-  theme_minimal() +
+  scale_fill_manual(values = c("darkgreen", "darkred")) +
+  facet_grid(. ~ CONTIG, scales = "free_x") +
+  scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6)) +
+  ggpubr::theme_classic2() +
   theme(
+    legend.position = "bottom",
+    strip.background = element_blank(),
+    strip.text.x = element_text(hjust = 0),
+    strip.text.y = element_text(angle = 0, face = "bold"),
+    panel.spacing.x=unit(0.0, "lines"),
+    panel.spacing.y=unit(0.0, "lines"),
+    axis.line.y = element_blank(),
     axis.text.y = element_blank(),
+    axis.line.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank(),
     axis.title.y = element_blank(),
     axis.ticks.y = element_blank()
   ) +
-  scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6))
+  labs(
+    title = paste("Regions of Agreement/Disagreement Between Methods (", BIN_SIZE_LABEL, " bins)", sep=""),
+    x = "Genome Position (Mb)",
+    fill = NULL
+  )
 ```
 
 ## Effect of Bin Size

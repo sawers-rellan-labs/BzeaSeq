@@ -189,15 +189,26 @@ Analyze the metadata to identify teosinte and Tripsacum samples:
 
 ```bash
 # Taxonomic distribution
-grep -v "Z. mays" schnable2023/schnable2023_metadata.tab | cut -f2 | grep -v "Species" | sort | uniq -c
-
+grep -v "Z. mays" schnable2023/schnable2023_metadata.tab \
+  | cut -f2 | grep -v "Species" \
+  | sort | uniq -c
+  
 # Create wild_relative list
-grep -v "Z. mays" schnable2023/schnable2023_metadata.tab | cut -f1 | grep -v "ID">> wild_relatives_id.list
+grep -v "Z. mays" schnable2023/schnable2023_metadata.tab \
+  | cut -f1 | grep -v "ID" \
+  >> wild_relatives_id.list
 
 # Add B73 to the reference sample list
+# remove Tripsacum
 grep "B73" schnable2023/schnable2023_metadata.tab \
   | cut -f1 | cat - wild_relatives_id.list \
-  | sort| uniq >  wideseq_ref_id.list      # Create a final sorted and deduplicated sample list
+  | grep -v tripsacum \
+  | sort| uniq >  wideseq_ref_id.list 
+
+# Create a final sorted and deduplicated sample list
+grep "B73" schnable2023/schnable2023_metadata.tab \
+  | cut -f1 | cat - wild_relatives_id.list \
+  | sort| uniq >  wideseq_ref_id.list
 ```
 
 #### 4.3.3 Comparison with Chen2022 Dataset
@@ -248,6 +259,9 @@ for chr in {1..10}; do
     
     # Index the output file
     bcftools index ${OUTPUT_VCF}
+    
+    # gatk index
+    gatk IndexFeatureFile -I ${OUTPUT_VCF}
     
     echo "Completed chromosome ${chr}"
 done
