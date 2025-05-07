@@ -1,7 +1,6 @@
 #!/bin/bash
-# q_run_wideseq.sh
+# ./generate_wideseq_jobs.sh [config_file]
 # WideSeq Job Generator for LSF
-#
 # This script generates individual job scripts for each sample and creates
 # a submission script to send all jobs to the LSF scheduler.
 # It accounts for different sample plate numbers in the BAM file structure.
