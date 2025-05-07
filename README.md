@@ -236,8 +236,8 @@ Create a script to extract the teosinte samples and apply MAF filtering:
 # Extracts teosinte and Tripsacum samples from Schnable2023 VCF files
 # and applies MAF filtering.
 
-INPUT_DIR="./schnable2023"
-OUTPUT_DIR="./wideseq_ref"
+INPUT_DIR="chnable2023"
+OUTPUT_DIR="wideseq_ref"
 SAMPLE_LIST="wideseq_ref_id.list"
 
 # This will bias against huehue 
@@ -252,10 +252,14 @@ for chr in {1..10}; do
     
     # Input and output file paths
     INPUT_VCF="${INPUT_DIR}/schnable2023_chr${chr}.vcf.gz"
+    SAMPLE_FILTER_VCF="${OUTPUT_DIR}/wideseq_taxa_chr${chr}.vcf.gz"
     OUTPUT_VCF="${OUTPUT_DIR}/wideseq_chr${chr}.vcf.gz"
     
-    # Extract samples and apply MAF filtering
-    bcftools view -S ${SAMPLE_LIST} --min-af ${MAF_THRESHOLD}:minor ${INPUT_VCF} -Oz -o ${OUTPUT_VCF}
+    # Extract samples and 
+    bcftools view -S ${SAMPLE_LIST} ${INPUT_VCF} -Oz -o ${SAMPLE_FILTER_VCF}
+    
+    # apply MAF filtering   
+    bcftools view --min-af ${MAF_THRESHOLD}:minor ${SAMPLE_FILTER_VCF} -Oz -o ${OUTPUT_VCF}
     
     # Index the output file
     bcftools index ${OUTPUT_VCF}
