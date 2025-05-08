@@ -236,7 +236,7 @@ Create a script to extract the teosinte samples and apply MAF filtering:
 # Extracts teosinte and Tripsacum samples from Schnable2023 VCF files
 # and applies MAF filtering.
 
-INPUT_DIR="chnable2023"
+INPUT_DIR="schnable2023"
 OUTPUT_DIR="wideseq_ref"
 SAMPLE_LIST="wideseq_ref_id.list"
 
@@ -256,10 +256,10 @@ for chr in {1..10}; do
     OUTPUT_VCF="${OUTPUT_DIR}/wideseq_chr${chr}.vcf.gz"
     
     # Extract samples and 
-    bcftools view -S ${SAMPLE_LIST} ${INPUT_VCF} -Oz -o ${SAMPLE_FILTER_VCF}
+    bcftools view -S ${SAMPLE_LIST} -m2 -M2 -v snps ${INPUT_VCF} -Oz -o ${SAMPLE_FILTER_VCF}
     
     # apply MAF filtering   
-    bcftools view --min-af ${MAF_THRESHOLD}:minor ${SAMPLE_FILTER_VCF} -Oz -o ${OUTPUT_VCF}
+    bcftools view --min-af ${MAF_THRESHOLD}:minor -v snps ${SAMPLE_FILTER_VCF} -Oz -o ${OUTPUT_VCF}
     
     # Index the output file
     bcftools index ${OUTPUT_VCF}
@@ -321,27 +321,27 @@ echo "Average variant density: ${density_per_100kb} variants per 100kb"
 Giving the following output:
 ```
 Calculating statistics for chromosome 1...
-Chromosome 1: 4014996 variants
+Chromosome 1: 4006441 variants
 Calculating statistics for chromosome 2...
-Chromosome 2: 3107336 variants
+Chromosome 2: 3100759 variants
 Calculating statistics for chromosome 3...
-Chromosome 3: 3134513 variants
+Chromosome 3: 3128544 variants
 Calculating statistics for chromosome 4...
-Chromosome 4: 3536756 variants
+Chromosome 4: 3529519 variants
 Calculating statistics for chromosome 5...
-Chromosome 5: 2884437 variants
+Chromosome 5: 2878472 variants
 Calculating statistics for chromosome 6...
-Chromosome 6: 2148207 variants
+Chromosome 6: 2143655 variants
 Calculating statistics for chromosome 7...
-Chromosome 7: 2304091 variants
+Chromosome 7: 2297952 variants
 Calculating statistics for chromosome 8...
-Chromosome 8: 2287674 variants
+Chromosome 8: 2283288 variants
 Calculating statistics for chromosome 9...
-Chromosome 9: 2185739 variants
+Chromosome 9: 2181127 variants
 Calculating statistics for chromosome 10...
-Chromosome 10: 2058789 variants
-Total variants across all chromosomes: 27662538
-Average variant density: 1297.58 variants per 100kb
+Chromosome 10: 2054020 variants
+Total variants across all chromosomes: 27603777
+Average variant density: 1294.82 variants per 100kb
 ```
 
 ## 5. WideSeq Analysis Pipeline

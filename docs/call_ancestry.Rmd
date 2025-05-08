@@ -28,10 +28,10 @@ BIN_SIZE_LABEL<-"1Mb"
 
 This document outlines a genomic analysis performed on maize genetic data. The goal is to identify genomic ancestry across bins of size `r BIN_SIZE_LABEL` using the following approach:
 
-1. Bins with no alternative alleles (ALT_FREQ_NORM = 0) are automatically classified as "REF"
-2. For the remaining bins (ALT_FREQ_NORM > 0), K-means clustering with k=3 is applied
-3. The clusters are assigned "REF" (lowest ALT_FREQ_NORM), "HET" (intermediate ALT_FREQ_NORM), and "ALT" (highest ALT_FREQ_NORM)
-4. We replace the "REF" assignment from step 3 with the automatic "REF" assignment from step 1 for bins with ALT_FREQ_NORM = 0
+1. Bins with no alternative alleles (ALT_FREQ = 0) are automatically classified as "REF"
+2. For the remaining bins (ALT_FREQ > 0), K-means clustering with k=3 is applied
+3. The clusters are assigned "REF" (lowest ALT_FREQ), "HET" (intermediate ALT_FREQ), and "ALT" (highest ALT_FREQ)
+4. We replace the "REF" assignment from step 3 with the automatic "REF" assignment from step 1 for bins with ALT_FREQ = 0
 
 Four different clustering methods are compared:
 1. K-means with normalized ALT_FREQ
@@ -61,31 +61,20 @@ First, we read the binned allelic counts:
 ```{r create-bins}
 # Create bins of specified size and calculate summary statistics for each bin
 read_freq <- read.table("~/Desktop/PN17_SID1632_bin_genotypes.tsv",header=TRUE)
+
 # Display first few rows of the binned data
 head(read_freq)
 
 # Display summary of bins
 cat("Total number of bins:", nrow(read_freq), "\n")
-cat("Average number of variants per bin:", mean(read_freq$VARIANT_COUNT), "\n")
-cat("Median number of variants per bin:", median(read_freq$VARIANT_COUNT), "\n")
-cat("Range of variants per bin:", min(read_freq$VARIANT_COUNT), "to", max(read_freq$VARIANT_COUNT), "\n")
+cat("Average depth sum:",  mean(read_freq$DEPTH_SUM), "\n")
+cat("Average number of informative variants per bin:", mean(read_freq$INFORMATIVE_VARIANT_COUNT), "\n")
+cat("Median number of informative variants per bin:", median(read_freq$INFORMATIVE_VARIANT_COUNT), "\n")
+cat("Range of informative  variants per bin:", min(read_freq$INFORMATIVE_VARIANT_COUNT), "to", max(read_freq$INFORMATIVE_VARIANT_COUNT), "\n")
 ```
-
-## Normalization by Variant Count
-
-We'll normalize the alternative allele frequency by the number of variants in each bin:
+# Plotting Allele counts
 
 ```{r normalize-data}
-# Calculate normalization statistics
-mean_VARIANT_COUNT <- mean(read_freq$VARIANT_COUNT)
-sd_VARIANT_COUNT <- sd(read_freq$VARIANT_COUNT)
-
-# Create normalized ALT_FREQ (accounting for variant density)
-read_freq <- read_freq %>%
-  mutate(
-    # Normalize by variant count
-    ALT_FREQ_NORM = ALT_FREQ*VARIANT_COUNT/mean_VARIANT_COUNT,
-  )
 
 # Show the relationship between variant count and ALT_FREQ
 ggplot(read_freq, aes(x = VARIANT_COUNT, y = ALT_FREQ)) +
@@ -101,13 +90,7 @@ p1 <- ggplot(read_freq, aes(x = ALT_FREQ)) +
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   labs(title = "Original ALT_FREQ distribution", x = "ALT_FREQ") +
   theme_minimal()
-
-p2 <- ggplot(read_freq, aes(x = ALT_FREQ_NORM)) +
-  geom_histogram(bins = 30, fill = "tomato", color = "white") +
-  labs(title = "Normalized ALT_FREQ_NORM distribution", x = "ALT_FREQ_NORM") +
-  theme_minimal()
-
-ggpubr::ggarrange(p1, p2, ncol = 2)
+p1
 ```
 
 ## Identify Zero-ALT Bins
@@ -115,19 +98,19 @@ ggpubr::ggarrange(p1, p2, ncol = 2)
 We'll now identify bins with no alternative alleles:
 
 ```{r identify-zero-bins}
-# Check how many bins have ALT_FREQ_NORM = 0
-zero_alt_bins <- sum(read_freq$ALT_FREQ_NORM == 0)
+# Check how many bins have ALT_FREQ = 0
+zero_alt_bins <- sum(read_freq$ALT_FREQ == 0)
 total_bins <- nrow(read_freq)
 
-cat("Bins with ALT_FREQ_NORM = 0:", 
+cat("Bins with ALT_FREQ = 0:", 
     zero_alt_bins, "out of", total_bins, 
     "(", round(100 * zero_alt_bins / total_bins, 1), "%)\n")
 
 # Create a separate dataset for non-zero bins (for clustering)
 non_zero_bins <- read_freq %>%
-  filter(ALT_FREQ_NORM > 0)
+  filter(ALT_FREQ > 0)
 
-cat("Bins with ALT_FREQ_NORM > 0 (to be clustered):", 
+cat("Bins with ALT_FREQ > 0 (to be clustered):", 
     nrow(non_zero_bins), "out of", total_bins,
     "(", round(100 * nrow(non_zero_bins) / total_bins, 1), "%)\n")
 ```
@@ -137,19 +120,15 @@ cat("Bins with ALT_FREQ_NORM > 0 (to be clustered):",
 We create transformed versions of the normalized ALT_FREQ data for non-zero bins:
 
 ```{r transform-nonzero-data}
-# Calculate minimum possible normalized frequency (for log transformation)
-min_read_freq_norm <-   1/(1/min(read_freq$ALT_FREQ_NORM[read_freq$ALT_FREQ_NORM>0])+1)
-
-
 # Create transformations
-non_zero_bins$log <- log10(non_zero_bins$ALT_FREQ_NORM + min_read_freq_norm) # Log transformation
-non_zero_bins$asin <- asin(sqrt(non_zero_bins$ALT_FREQ_NORM))           # Arcsin transformation
+non_zero_bins$log <- log10(non_zero_bins$ALT_FREQ) # Log transformation
+non_zero_bins$asin <- asin(sqrt(non_zero_bins$ALT_FREQ))           # Arcsin transformation
 
 # Visualize distributions of the normalized and transformed data
-p1 <- ggplot(non_zero_bins, aes(x = ALT_FREQ_NORM)) + 
+p1 <- ggplot(non_zero_bins, aes(x = ALT_FREQ)) + 
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
-  labs(title = paste("Normalized ALT_FREQ_NORM distribution (non-zero bins, ", BIN_SIZE_LABEL, ")", sep=""), 
-       x = "ALT_FREQ_NORM") +
+  labs(title = paste("Normalized ALT_FREQ distribution (non-zero bins, ", BIN_SIZE_LABEL, ")", sep=""), 
+       x = "ALT_FREQ") +
   theme_minimal()
 
 p2 <- ggplot(non_zero_bins, aes(x = asin)) + 
@@ -174,16 +153,16 @@ We apply K-means clustering to each version of the normalized data for the non-z
 ```{r kmeans-clustering-nonzero}
 K=3
 # Apply K-means clustering with k=3 to each transformation for non-zero bins
-non_zero_bins$K <- as.factor(Ckmeans.1d.dp(non_zero_bins$ALT_FREQ_NORM, K)$cluster)
+non_zero_bins$K <- as.factor(Ckmeans.1d.dp(non_zero_bins$ALT_FREQ, K)$cluster)
 non_zero_bins$Klog <- as.factor(Ckmeans.1d.dp(non_zero_bins$log, K)$cluster)
 non_zero_bins$Kasin <- as.factor(Ckmeans.1d.dp(non_zero_bins$asin, K)$cluster)
 
-# Function to relabel clusters as REF, HET, ALT based on ALT_FREQ_NORM
+# Function to relabel clusters as REF, HET, ALT based on ALT_FREQ
 relabel_clusters <- function(clusters, data) {
-  # Calculate mean ALT_FREQ_NORM for each cluster
-  cluster_means <- tapply(data$ALT_FREQ_NORM, clusters, mean)
+  # Calculate mean ALT_FREQ for each cluster
+  cluster_means <- tapply(data$ALT_FREQ, clusters, mean)
   
-  # Order clusters by mean ALT_FREQ_NORM
+  # Order clusters by mean ALT_FREQ
   ordered_clusters <- order(cluster_means)
   
   # Create mapping from original cluster to REF, HET, ALT
@@ -216,10 +195,10 @@ table(non_zero_bins$Kasin) %>% prop.table() %>% round(3)
 
 As a comparison to K-means, we also apply a Gaussian mixture model using the REBMIX library:
 
-```{r gmm-clustering-nonzero}
+```{r Kgmm-clustering-nonzero}
 # Fit Gaussian mixture model with 3 components
 normalest <- REBMIX(
-  Dataset = list(data.frame(Value = non_zero_bins$ALT_FREQ_NORM)),
+  Dataset = list(data.frame(Value = non_zero_bins$ALT_FREQ)),
   Preprocessing = "histogram",
   cmin = 3,  # Force 3 components
   cmax = 3,
@@ -229,14 +208,14 @@ normalest <- REBMIX(
 
 # Assign clusters
 normclu <- RCLRMIX(x = normalest)
-non_zero_bins$GMM <- as.factor(normclu@Zp)
+non_zero_bins$Kgmm <- as.factor(normclu@Zp)
 
-# Relabel GMM clusters
-non_zero_bins$GMM <- relabel_clusters(non_zero_bins$GMM, non_zero_bins)
+# Relabel Kgmm clusters
+non_zero_bins$Kgmm <- relabel_clusters(non_zero_bins$Kgmm, non_zero_bins)
 
-# Check GMM cluster proportions
+# Check Kgmm cluster proportions
 cat("Gaussian Mixture Model cluster proportions (non-zero bins):\n")
-table(non_zero_bins$GMM) %>% prop.table() %>% round(3)
+table(non_zero_bins$Kgmm) %>% prop.table() %>% round(3)
 ```
 
 ## Check Clustering Results for Non-Zero Bins
@@ -244,16 +223,16 @@ table(non_zero_bins$GMM) %>% prop.table() %>% round(3)
 Let's examine the clustering results for the non-zero bins:
 
 ```{r check-nonzero-clusters}
-# Calculate mean ALT_FREQ_NORM for each cluster and method
+# Calculate mean ALT_FREQ for each cluster and method
 cluster_summary <- non_zero_bins %>%
-  pivot_longer(cols = c(K, Klog, Kasin, GMM), 
+  pivot_longer(cols = c(K, Klog, Kasin, Kgmm), 
                names_to = "method", 
                values_to = "cluster") %>%
   group_by(method, cluster) %>%
   summarize(
-    mean_alt_freq_norm = mean(ALT_FREQ_NORM),
-    min_alt_freq_norm = min(ALT_FREQ_NORM),
-    max_alt_freq_norm = max(ALT_FREQ_NORM),
+    mean_ALT_FREQ = mean(ALT_FREQ),
+    min_ALT_FREQ = min(ALT_FREQ),
+    max_ALT_FREQ = max(ALT_FREQ),
     n_bins = n()
   ) %>%
   ungroup()
@@ -265,7 +244,7 @@ cluster_summary %>%
       method == "K" ~ "K-means (raw)",
       method == "Klog" ~ "K-means (log10)",
       method == "Kasin" ~ "K-means (arcsin)",
-      method == "GMM" ~ "Gaussian Mixture",
+      method == "Kgmm" ~ "Gaussian Mixture",
       TRUE ~ method
     )
   ) %>%
@@ -279,10 +258,10 @@ names(pal) <- c("REF", "HET", "ALT")
 
 # Create a function for histograms colored by cluster
 create_hist <- function(data, method_col, title) {
-  ggplot(data, aes(x = ALT_FREQ_NORM, fill = .data[[method_col]])) +
+  ggplot(data, aes(x = ALT_FREQ, fill = .data[[method_col]])) +
     geom_histogram(bins = 30, position = "identity", alpha = 0.6) +
     scale_fill_manual(values = pal) +
-    labs(title = title, x = "ALT_FREQ_NORM", fill = "Cluster") +
+    labs(title = title, x = "ALT_FREQ", fill = "Cluster") +
     theme_minimal()
 }
 
@@ -290,7 +269,7 @@ create_hist <- function(data, method_col, title) {
 h1 <- create_hist(non_zero_bins, "K", "K-means on normalized ALT_FREQ")
 h2 <- create_hist(non_zero_bins, "Klog", "K-means on log10 transformed ALT_FREQ")
 h3 <- create_hist(non_zero_bins, "Kasin", "K-means on arcsin transformed ALT_FREQ")
-h4 <- create_hist(non_zero_bins, "GMM", "Gaussian mixture model on normalized ALT_FREQ")
+h4 <- create_hist(non_zero_bins, "Kgmm", "Gaussian mixture model on normalized ALT_FREQ")
 
 
 # Display all histograms
@@ -299,31 +278,31 @@ ggpubr::ggarrange(h1, h2, h3, h4, ncol = 2)
 
 ## Merge Results Back to Full Dataset
 
-Now we merge the clustering results back to the full dataset, ensuring that bins with ALT_FREQ_NORM = 0 are classified as "REF":
+Now we merge the clustering results back to the full dataset, ensuring that bins with ALT_FREQ = 0 are classified as "REF":
 
 ```{r merge-results}
 # Create a new column in read_freq for each clustering method
 read_freq$K <- factor(NA, levels = c("REF", "HET", "ALT"))
 read_freq$Klog <- factor(NA, levels = c("REF", "HET", "ALT"))
 read_freq$Kasin <- factor(NA, levels = c("REF", "HET", "ALT"))
-read_freq$GMM <- factor(NA, levels = c("REF", "HET", "ALT"))
+read_freq$Kgmm <- factor(NA, levels = c("REF", "HET", "ALT"))
 
 # First, assign the non-zero bin clustering results to the main dataset
-for (method in c("K", "Klog", "Kasin", "GMM")) {
+for (method in c("K", "Klog", "Kasin", "Kgmm")) {
   # Create an index for non-zero bins in the original data
-  non_zero_idx <- which(read_freq$ALT_FREQ_NORM > 0)
+  non_zero_idx <- which(read_freq$ALT_FREQ > 0)
   
   # Assign cluster classifications to non-zero bins
   read_freq[[method]][non_zero_idx] <- non_zero_bins[[method]]
 }
 
-# Then, force bins with ALT_FREQ_NORM = 0 to be "REF"
-zero_idx <- which(read_freq$ALT_FREQ_NORM == 0)
-for (method in c("K", "Klog", "Kasin", "GMM")) {
+# Then, force bins with ALT_FREQ = 0 to be "REF"
+zero_idx <- which(read_freq$ALT_FREQ == 0)
+for (method in c("K", "Klog", "Kasin", "Kgmm")) {
   read_freq[[method]][zero_idx] <- "REF"
 }
 
-# The log transform hace nice normala data but high sensitivity to HET
+# The log transform hace nice normal data but high sensitivity to HET
 # so I'decide to change thos hets to REF
 read_freq$Klog[read_freq$Klog=="HET"] <- "REF"
 
@@ -331,16 +310,16 @@ read_freq$Klog[read_freq$Klog=="HET"] <- "REF"
 cat("Final cluster proportions for raw K-means:\n")
 table(read_freq$K) %>% prop.table() %>% round(3)
 
-# Summarize mean ALT_FREQ_NORM for each genotype class across methods
+# Summarize mean ALT_FREQ for each genotype class across methods
 genotype_summary <- read_freq %>%
-  pivot_longer(cols = c(K, Klog, Kasin, GMM), 
+  pivot_longer(cols = c(K, Klog, Kasin, Kgmm), 
                names_to = "method", 
                values_to = "genotype") %>%
   group_by(method, genotype) %>%
   summarize(
-    mean_alt_freq_norm = mean(ALT_FREQ_NORM),
+    mean_ALT_FREQ = mean(ALT_FREQ),
     mean_alt_freq = mean(ALT_FREQ),
-    median_alt_freq_norm = median(ALT_FREQ_NORM),
+    median_ALT_FREQ = median(ALT_FREQ),
     mean_n = mean(n),
     n_bins = n()
   ) %>%
@@ -353,7 +332,7 @@ genotype_summary %>%
       method == "K" ~ "K-means (raw)",
       method == "Klog" ~ "K-means (log10)",
       method == "Kasin" ~ "K-means (arcsin)",
-      method == "GMM" ~ "Gaussian Mixture",
+      method == "Kgmm" ~ "Gaussian Mixture",
       TRUE ~ method
     )
   ) %>%
@@ -365,15 +344,15 @@ genotype_summary %>%
 
 To compare the different clustering methods, we visualize the data in several ways:
 
-### 1. Scatter plots of ALT_FREQ_NORM colored by genotype
+### 1. Scatter plots of ALT_FREQ colored by genotype
 
 ```{r scatter-plots, fig.height=12}
 # Create a function for scatter plots
 create_scatter <- function(data, method_col, title) {
   data %>%
     mutate(POS = BIN_POS * BIN_SIZE) %>%
-    ggplot(aes(x = POS, y = ALT_FREQ_NORM, col = .data[[method_col]])) +
-        labs(title = title, x = "Position (bp)", y = "ALT_FREQ_NORM", color = "Genotype") +
+    ggplot(aes(x = POS, y = ALT_FREQ, col = .data[[method_col]])) +
+        labs(title = title, x = "Position (bp)", y = "ALT_FREQ", color = "Genotype") +
     geom_point(size = 1, alpha = 0.7) +
     scale_color_manual(values = pal) +
     facet_wrap(.~CONTIG,ncol=10, scales = "free_x", strip.position = "bottom") +
@@ -384,13 +363,24 @@ create_scatter <- function(data, method_col, title) {
 read_freq$CONTIG <-factor(read_freq$CONTIG, levels= paste0("chr",1:10))
   
 # Create scatter plots for each method
-p1 <- create_scatter(read_freq, "K", paste("K-means on normalized ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p1 <- create_scatter(read_freq, "K", paste("K-means on ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
 p2 <- create_scatter(read_freq, "Klog", paste("K-means on log10 transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
 p3 <- create_scatter(read_freq, "Kasin", paste("K-means on arcsin transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
-p4 <- create_scatter(read_freq, "GMM", paste("Gaussian mixture model on normalized ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p4 <- create_scatter(read_freq, "Kgmm", paste("Gaussian mixture model on normalized ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+
 
 # Display all scatter plots
 ggpubr::ggarrange(p1, p2, p3, p4, ncol = 1, common.legend = TRUE)
+```
+```{r chr8, fig.height=5}
+# display chromosme *
+create_scatter(read_freq %>% filter(CONTIG=="chr8"), "Klog", paste("K-means on log10 transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+```
+
+```{r problematic_chr8}
+# this is the bin corresponding to that point
+read_freq %>% filter(CONTIG=="chr8", ALT_COUNT==0)
+
 ```
 
 ```{r single_method_tile, fig.height=3}
@@ -398,18 +388,20 @@ ggpubr::ggarrange(p1, p2, p3, p4, ncol = 1, common.legend = TRUE)
 create_tile <- function(data, method_col, title) {
 
   data %>%
-    mutate(POS = POS_BIN * BIN_SIZE) %>%
+    
+    mutate(CONTIG = factor(CONTIG, levels= paste0("chr",1:10)),
+           POS = BIN_POS * BIN_SIZE) %>%
     ggplot(aes(x = POS, y = 1, fill = .data[[method_col]])) +
     geom_tile() +
     facet_wrap( .~CONTIG, ncol = 1, strip.position = "left") +
     scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6))+
     scale_fill_manual(values = pal) +
     labs(title = title, x = "Position (bp)", fill = "Genotype") +
-    ggpubr::theme_classic2() +
+    ggpubr::theme_classic2(base_size = 10) +
     theme(
-      # legend.position = "top",
+      legend.position = "bottom",
       strip.background = element_blank(),
-      strip.text.y.left = element_text(angle = 0),
+      strip.text.y.left = element_text(angle = 0, hjust = 0),
       panel.spacing.y=unit(0.0, "lines"),
       axis.line.y = element_blank(),
       axis.text.y = element_blank(),
@@ -418,10 +410,10 @@ create_tile <- function(data, method_col, title) {
     ) 
 }
 
-# Create tile plots for PN17_SID1632
+# Create tile plots for PN15_SID1353
 # create_tile(read_freq, "GENOTYPE", paste("ALT_FREQ (", BIN_SIZE_LABEL, " bins)"," Sample PN17_SID1632", sep=""))
-
-create_tile(read_freq, "Klog", paste("ALT_FREQ (", BIN_SIZE_LABEL, " bins)"," Sample PN17_SID1632", sep=""))
+colnames(read_freq)
+create_tile(read_freq, "Klog", paste("Sample PN15_SID1353\n","log10(ALT_FREQ) | ", BIN_SIZE_LABEL, " bins", sep=""))
 
 ```
 
@@ -434,7 +426,7 @@ read_freq %>%
   mutate(
     POS = BIN_POS * BIN_SIZE,
     method = factor(method, 
-                   levels = c("K", "Klog", "Kasin", "GMM"),
+                   levels = c("K", "Klog", "Kasin", "Kgmm"),
                    labels = c("K-means (raw)", "K-means (log10)", "K-means (arcsin)", "Gaussian Mixture"))
   ) %>%
   ggplot(aes(x = POS, y = 1, fill = K)) +
@@ -474,7 +466,7 @@ Let's compare the genotype frequencies across all methods:
 ```{r genotype-frequencies}
 # Create a summary of genotype frequencies for all methods
 genotype_freq <- read_freq %>%
-  pivot_longer(cols = c(K, Klog, Kasin, GMM), 
+  pivot_longer(cols = c(K, Klog, Kasin, Kgmm), 
                names_to = "method", 
                values_to = "genotype") %>%
   group_by(method, genotype) %>%
@@ -488,7 +480,7 @@ genotype_freq <- read_freq %>%
       method == "K" ~ "K-means (raw)",
       method == "Klog" ~ "K-means (log10)",
       method == "Kasin" ~ "K-means (arcsin)",
-      method == "GMM" ~ "Gaussian Mixture",
+      method == "Kgmm" ~ "Gaussian Mixture",
       TRUE ~ method
     )
   )
@@ -529,7 +521,7 @@ Let's analyze how much the different clustering methods agree with each other:
 ```{r method-agreement}
 # Create a function to calculate agreement between methods
 agreement_matrix <- matrix(NA, 4, 4)
-methods <- c("K", "Klog", "Kasin", "GMM")
+methods <- c("K", "Klog", "Kasin", "Kgmm")
 colnames(agreement_matrix) <- methods
 rownames(agreement_matrix) <- methods
 
@@ -575,7 +567,7 @@ disagreement_data <- read_freq %>%
     POS = BIN_POS * BIN_SIZE,
     # Check if all methods agree
     agreement = factor(ifelse(
-      K == Klog & K == Kasin & K == GMM,
+      K == Klog & K == Kasin & K == Kgmm,
       "All methods agree",
       "Methods disagree"
     ), levels = c("All methods agree", "Methods disagree"))
@@ -630,7 +622,7 @@ We can save the final results for further analysis:
 ```{r save-results, eval=FALSE}
 # Extract relevant columns
 results <- read_freq %>%
-  select(BIN_POS, VARIANT_COUNT, READ_COUNT, ALT_COUNT, ALT_FREQ, ALT_FREQ_NORM, GENOTYPE)
+  select(BIN_POS, VARIANT_COUNT, READ_COUNT, ALT_COUNT, ALT_FREQ, ALT_FREQ, GENOTYPE)
 
 # Save to file with bin size in the filename
 output_file <- paste0("maize_bin_ancestry_", BIN_SIZE_LABEL, ".csv")
@@ -643,9 +635,9 @@ cat("Results saved to:", output_file, "\n")
 
 We implemented a three-class clustering approach for genomic ancestry assignment in bins of size `r BIN_SIZE_LABEL`, with special handling for bins with no alternative alleles:
 
-1. Bins with no alternative alleles (ALT_FREQ_NORM = 0) were automatically classified as "REF"
-2. For the remaining bins (ALT_FREQ_NORM > 0), K-means clustering with k=3 was applied
-3. The clusters were labeled "REF" (lowest ALT_FREQ_NORM), "HET" (intermediate), and "ALT" (highest)
+1. Bins with no alternative alleles (ALT_FREQ = 0) were automatically classified as "REF"
+2. For the remaining bins (ALT_FREQ > 0), K-means clustering with k=3 was applied
+3. The clusters were labeled "REF" (lowest ALT_FREQ), "HET" (intermediate), and "ALT" (highest)
 4. We replaced any clustering-assigned "REF" with forced "REF" assignments for bins with zero ALT alleles
 
 After comparing four clustering methods on the non-zero bins:
