@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# BinAncestry.R
+# get_ancestry_calls.R
 # Script to process GATK AlleleCountsOutput and generate binned ancestry calls
 # Usage: Rscript BinAncestry.R input.allelicCounts.tsv output_prefix [bin_size]
 # Example: Rscript BinAncestry.R sample1.allelicCounts.tsv sample1 100000
@@ -15,8 +15,8 @@ suppressPackageStartupMessages({
 args <- commandArgs(trailingOnly = TRUE)
 
 if (length(args) < 2) {
-  cat("Usage: Rscript BinAncestry.R input.allelicCounts.tsv output_prefix [bin_size]\n")
-  cat("Example: Rscript BinAncestry.R sample1.allelicCounts.tsv sample1 1000000\n")
+  cat("Usage: Rscript get_ancestry_calls.R input.allelicCounts.tsv output_prefix [bin_size]\n")
+  cat("Example: Rscript get_ancestry_calls.R sample1.allelicCounts.tsv sample1 1000000\n")
   quit(status = 1)
 }
 
@@ -34,6 +34,9 @@ cat(paste("Processing file:", input_file, "\n"))
 cat(paste("Output prefix:", output_prefix, "\n"))
 cat(paste("Bin size:", bin_size, "bp\n"))
 
+# Define correct chromosome order
+chrom_order <- paste0("chr", 1:10)
+
 # Start timing
 start_time <- Sys.time()
 cat(paste("Started at:", start_time, "\n"))
@@ -47,6 +50,9 @@ if (inherits(read_count, "try-error")) {
   quit(status = 1)
 }
 
+# Ensure chromosome is a factor with correct ordering
+read_count$CONTIG <- factor(read_count$CONTIG, levels = chrom_order)
+
 informative_variant_count <- nrow(read_count %>% filter(ALT_COUNT + REF_COUNT > 0))
 
 # Print basic stats
@@ -57,15 +63,17 @@ cat(paste("Chromosomes found:", paste(unique(read_count$CONTIG), collapse=", "),
 # Create bins and calculate statistics
 cat("Creating bins and calculating statistics...\n")
 read_freq <- read_count %>%
+  # Ensure chromosome ordering
+  mutate(CONTIG = factor(CONTIG, levels = chrom_order)) %>%
   group_by(CONTIG) %>%
   # Create position bins by dividing positions into bins of size bin_size
   mutate(BIN_POS = ceiling(POSITION/bin_size) %>% as.integer(),
-         READ_DEPTH = ALT_COUNT + REF_COUNT) %>% # Total read depth at this position, GATK calls it allelecount
+         READ_DEPTH = ALT_COUNT + REF_COUNT) %>% # Total read depth at this position
   # Group by these bins
   group_by(CONTIG, BIN_POS) %>%
   # Calculate statistics for each bin
   summarise(
-    VARIANT_COUNT = n(),                                      # Number of variants in bin  
+    VARIANT_COUNT = n(),                                      # Number of variants in bin
     INFORMATIVE_VARIANT_COUNT = sum(ALT_COUNT + REF_COUNT > 0), # Number of variants with actual data for this sample
     DEPTH_SUM = sum(READ_DEPTH),                               # Sum of read depths over all variant positions in the bin
     ALT_COUNT = sum(ALT_COUNT),                               # Sum of alternative allele counts
@@ -73,32 +81,36 @@ read_freq <- read_count %>%
     BIN_START = min(POSITION),                                # Bin start position
     BIN_END = max(POSITION),                                  # Bin end position
     .groups = 'drop'
-  ) %>%
-  # Convert to data.table for faster operations later
-  as.data.table()
-read_freq$CONTIG <- factor(read_freq$CONTIG, levels = paste0("chr",1:10))
+  )
+
+# Ensure CONTIG stays as a factor with proper ordering throughout the analysis
+read_freq$CONTIG <- factor(read_freq$CONTIG, levels = chrom_order)
 
 # Display bin summary
 total_bins <- nrow(read_freq)
 cat(paste("Total number of bins:", total_bins, "\n"))
-cat(paste("Average number of informative variants per bin:", 
+cat(paste("Average number of informative variants per bin:",
           round(mean(read_freq$INFORMATIVE_VARIANT_COUNT), 1), "\n"))
 cat(paste("Median number of informative variants per bin:", median(read_freq$INFORMATIVE_VARIANT_COUNT), "\n"))
-cat(paste("Range of informative variants per bin:", min(read_freq$INFORMATIVE_VARIANT_COUNT), "to", 
-          max(read_freq$INFORMATIVE_VARIANT_COUNT), "\n"))
+cat(paste("Range of informative variants per bin:", min(read_freq$INFORMATIVE_VARIANT_COUNT), "to", max(read_freq$INFORMATIVE_VARIANT_COUNT), "\n"))
 
 # Identify zero-ALT bins
 zero_alt_bins <- sum(read_freq$ALT_FREQ == 0)
-cat(paste("Bins with ALT_FREQ = 0:", 
-          zero_alt_bins, "out of", total_bins, 
+cat(paste("Bins with ALT_FREQ = 0:",
+          zero_alt_bins, "out of", total_bins,
           "(", round(100 * zero_alt_bins / total_bins, 1), "%)\n"))
 
 # Create a separate dataset for non-zero bins (for clustering)
 non_zero_bins <- read_freq %>%
   filter(ALT_FREQ > 0) %>%
-  as.data.table()
+  # Maintain chromosome ordering
+  mutate(CONTIG = factor(CONTIG, levels = chrom_order))
 
-cat(paste("Bins with ALT_FREQ > 0 (to be clustered):", 
+if (nrow(non_zero_bins) > 0) {
+  non_zero_bins$log <- log10(non_zero_bins$ALT_FREQ + 1e-10) # Adding small value to avoid log(0)
+}
+
+cat(paste("Bins with ALT_FREQ > 0 (to be clustered):",
           nrow(non_zero_bins), "out of", total_bins,
           "(", round(100 * nrow(non_zero_bins) / total_bins, 1), "%)\n"))
 
@@ -162,8 +174,16 @@ read_freq$GENOTYPE <- factor(NA, levels = c("REF", "HET", "ALT"))
 # If there are non-zero bins to cluster
 if (nrow(non_zero_bins) > 0) {
   # Use data.table for faster merging
-  setkey(non_zero_bins, CONTIG, BIN_POS)
+  read_freq <- as.data.table(read_freq)
+  non_zero_bins <- as.data.table(non_zero_bins)
+  
+  # Ensure CONTIG is still a factor with proper ordering
+  read_freq$CONTIG <- factor(read_freq$CONTIG, levels = chrom_order)
+  non_zero_bins$CONTIG <- factor(non_zero_bins$CONTIG, levels = chrom_order)
+  
+  # Set keys for merging
   setkey(read_freq, CONTIG, BIN_POS)
+  setkey(non_zero_bins, CONTIG, BIN_POS)
   
   # Update read_freq with genotype from non_zero_bins
   read_freq[non_zero_bins, GENOTYPE := i.Klog]
@@ -181,16 +201,22 @@ final_props <- prop.table(table(read_freq$GENOTYPE)) * 100
 cat("Final genotype proportions:\n")
 print(round(final_props, 1))
 
+# Make sure CONTIG is still ordered correctly
+read_freq$CONTIG <- factor(read_freq$CONTIG, levels = chrom_order)
+
 # Prepare output for each chromosome
 cat("Writing results to disk...\n")
+
+# Sort by chromosome (in numeric order) and bin position
+read_freq <- read_freq %>%
+  # Ensure chromosome ordering once more
+  mutate(CONTIG = factor(CONTIG, levels = chrom_order)) %>%
+  arrange(CONTIG, BIN_POS)
 
 # Save detailed binned results
 output_file <- paste0(output_prefix, "_bin_genotypes.tsv")
 write.table(read_freq, output_file, sep = "\t", row.names = FALSE, quote = FALSE)
 cat(paste("Detailed bin results saved to:", output_file, "\n"))
-
-# Create a simplified BED format for visualization (with genotype as score)
-# This is useful for loading into genome browsers
 
 # Function to find connected components and extract ALT segments
 find_alt_segments <- function(bed_data) {
@@ -208,19 +234,25 @@ find_alt_segments <- function(bed_data) {
     return(NULL)
   }
   
-  bed_data$chrom <- factor(bed_data$chrom, levels = paste0("chr",1:10))
+  # Ensure chromosome is properly ordered
+  bed_data$chrom <- factor(bed_data$chrom, levels = chrom_order)
   
   # Create empty data.table for results
   all_segments <- data.table()
   
-  # Process each chromosome separately
+  # Process each chromosome separately in the correct order
   cat("Processing chromosomes for ALT segments...\n")
   
-  for (chr in levels(bed_data$chrom)) {
+  for (chr in chrom_order) {
+    # Skip chromosomes not in the data
+    if (!(chr %in% bed_data$chrom)) {
+      next
+    }
+    
     cat("  Processing", chr, "...\n")
     chr_data <- bed_data[chrom == chr]
     
-    # Sort by start position
+    # Sort by start position within chromosome
     setorder(chr_data, start)
     
     # Create a state column (1 for ALT, 0 for others)
@@ -275,7 +307,7 @@ find_alt_segments <- function(bed_data) {
         # Add to results
         all_segments <- rbind(all_segments, data.table(
           sample = chr_data$sample[1],
-          chrom = chr,
+          chrom = chr,  # Use the actual chromosome value, not index
           start = min_start,
           end = max_end,
           genotype = "ALT",
@@ -286,8 +318,12 @@ find_alt_segments <- function(bed_data) {
     }
   }
   
+  # Make sure chromosomes are still properly ordered in results
   if (nrow(all_segments) > 0) {
-    cat("Found", nrow(all_segments), "ALT segments across", 
+    all_segments$chrom <- factor(all_segments$chrom, levels = chrom_order)
+    setorder(all_segments, chrom, start)
+    
+    cat("Found", nrow(all_segments), "ALT segments across",
         length(unique(all_segments$chrom)), "chromosomes.\n")
     return(all_segments)
   } else {
@@ -300,13 +336,17 @@ find_alt_segments <- function(bed_data) {
 bed_data <- read_freq %>%
   mutate(
     sample = output_prefix,
-    chrom = CONTIG,
+    chrom = CONTIG,  # Make sure this uses the factor with proper ordering
     start = BIN_START,
     end = BIN_END,
     genotype = GENOTYPE,
+    score = as.numeric(factor(GENOTYPE, levels = c("REF", "HET", "ALT"))) - 1,
     alt_freq = ALT_FREQ
   ) %>%
-  select(sample, chrom, start, end, genotype, alt_freq) %>%
+  # Ensure chromosome ordering again
+  mutate(chrom = factor(chrom, levels = chrom_order)) %>%
+  select(sample, chrom, start, end, genotype, score, alt_freq) %>%
+  arrange(chrom, start) %>%  # Sort by chromosome and position
   as.data.table()
 
 # Find ALT segments
@@ -315,7 +355,11 @@ alt_segments <- find_alt_segments(bed_data)
 # Save ALT segments to BED file
 bed_file <- paste0(output_prefix, "_ALT.bed")
 if (!is.null(alt_segments) && nrow(alt_segments) > 0) {
-  write.table(alt_segments, file = bed_file, 
+  # Make sure chromosomes are in the right order for output
+  alt_segments$chrom <- factor(alt_segments$chrom, levels = chrom_order)
+  alt_segments <- alt_segments[order(alt_segments$chrom, alt_segments$start)]
+  
+  write.table(alt_segments, file = bed_file,
               sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
   cat(paste("BED format results with ALT segments saved to:", bed_file, "\n"))
 } else {
@@ -324,6 +368,8 @@ if (!is.null(alt_segments) && nrow(alt_segments) > 0) {
 
 # Create a chromosome-level summary
 chrom_summary <- read_freq %>%
+  # Ensure chromosome ordering
+  mutate(CONTIG = factor(CONTIG, levels = chrom_order)) %>%
   group_by(CONTIG) %>%
   summarize(
     total_bins = n(),
@@ -334,7 +380,9 @@ chrom_summary <- read_freq %>%
     HET_pct = 100 * sum(GENOTYPE == "HET", na.rm = TRUE) / n(),
     ALT_pct = 100 * sum(GENOTYPE == "ALT", na.rm = TRUE) / n(),
     non_ref_pct = 100 * sum(GENOTYPE %in% c("HET", "ALT"), na.rm = TRUE) / n()
-  )
+  ) %>%
+  # Sort by chromosome number
+  arrange(CONTIG)
 
 summary_file <- paste0(output_prefix, "_chromosome_summary.tsv")
 write.table(chrom_summary, summary_file, sep = "\t", row.names = FALSE, quote = FALSE)

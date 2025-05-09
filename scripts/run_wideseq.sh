@@ -1,4 +1,6 @@
 #!/bin/bash
+# todo(frodig4) This script does not do the ancestry call by bins correctly
+#               Rerun on test data and correct!!!!!!
 # run_wideseq.sh
 #
 # Description: This script collects allelic counts at teosinte-specific variant positions
