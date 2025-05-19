@@ -1,38 +1,23 @@
 #!/usr/bin/env Rscript
-# get_ancestry_calls.R
-# Script to process GATK AlleleCountsOutput and generate binned ancestry calls
-# Usage: Rscript BinAncestry.R input.allelicCounts.tsv output_prefix [bin_size]
-# Example: Rscript BinAncestry.R sample1.allelicCounts.tsv sample1 100000
-
-# Load required libraries
+# get_genotypes_on_all_samples.R
 suppressPackageStartupMessages({
   library(dplyr)
   library(data.table)
   library(Ckmeans.1d.dp)
 })
 
-# Get command line arguments
-args <- commandArgs(trailingOnly = TRUE)
+input_file <- "./ancestry/bzea_bin_genotypes.tsv"
+output_prefix <-"./ancestry/all_samples"
+cat("Reading allelic counts data...\n")
+read_freq <- try(read.table(input_file, comment.char = "@", header = TRUE))
 
-if (length(args) < 2) {
-  cat("Usage: Rscript get_ancestry_calls.R input.allelicCounts.tsv output_prefix [bin_size]\n")
-  cat("Example: Rscript get_ancestry_calls.R sample1.allelicCounts.tsv sample1 1000000\n")
+if (inherits(read_freq, "try-error")) {
+  cat("Error reading input file. Please check the file format.\n")
   quit(status = 1)
 }
 
-input_file <- args[1]
-output_prefix <- args[2]
-bin_size <- ifelse(length(args) >= 3, as.numeric(args[3]), 1000000)
-
-# Output messages to both console and log file
-log_file <- paste0(output_prefix, ".log")
-log_con <- file(log_file, "w")
-sink(log_con, type = "output", append = FALSE)
-sink(log_con, type = "message", append = FALSE)
-
 cat(paste("Processing file:", input_file, "\n"))
 cat(paste("Output prefix:", output_prefix, "\n"))
-cat(paste("Bin size:", bin_size, "bp\n"))
 
 # Define correct chromosome order
 chrom_order <- paste0("chr", 1:10)
@@ -40,50 +25,6 @@ chrom_order <- paste0("chr", 1:10)
 # Start timing
 start_time <- Sys.time()
 cat(paste("Started at:", start_time, "\n"))
-
-# Read the allelic counts data
-cat("Reading allelic counts data...\n")
-read_count <- try(read.table(input_file, comment.char = "@", header = TRUE))
-
-if (inherits(read_count, "try-error")) {
-  cat("Error reading input file. Please check the file format.\n")
-  quit(status = 1)
-}
-
-# Ensure chromosome is a factor with correct ordering
-read_count$CONTIG <- factor(read_count$CONTIG, levels = chrom_order)
-
-informative_variant_count <- nrow(read_count %>% filter(ALT_COUNT + REF_COUNT > 0))
-
-# Print basic stats
-cat(paste("Total variant positions in file:", nrow(read_count), "\n"))
-cat(paste("Total informative variants:", informative_variant_count, "\n"))
-cat(paste("Chromosomes found:", paste(unique(read_count$CONTIG), collapse=", "), "\n"))
-
-
-# Create bins and calculate statistics
-cat("Creating bins and calculating statistics...\n")
-read_freq <- read_count %>%
-  # Ensure chromosome ordering
-  mutate(CONTIG = factor(CONTIG, levels = chrom_order)) %>%
-  group_by(SAMPLE,CONTIG) %>%
-  # Create position bins by dividing positions into bins of size bin_size
-  mutate(BIN_POS = ceiling(POSITION/bin_size) %>% as.integer(),
-         READ_DEPTH = ALT_COUNT + REF_COUNT) %>% # Total read depth at this position
-  # Group by these bins
-  group_by(SAMPLE, CONTIG, BIN_POS) %>%
-  # Calculate statistics for each bin
-  summarise(
-    SAMPLE=sample1,
-    VARIANT_COUNT = n(),                                      # Number of variants in bin
-    INFORMATIVE_VARIANT_COUNT = sum(ALT_COUNT + REF_COUNT > 0), # Number of variants with actual data for this sample
-    DEPTH_SUM = sum(READ_DEPTH),                               # Sum of read depths over all variant positions in the bin
-    ALT_COUNT = sum(ALT_COUNT),                               # Sum of alternative allele counts
-    ALT_FREQ = ifelse(sum(READ_DEPTH) > 0, sum(ALT_COUNT)/sum(READ_DEPTH), 0), # Alternative allele frequency
-    BIN_START = min(POSITION),                                # Bin start position
-    BIN_END = max(POSITION),                                  # Bin end position
-    .groups = 'drop'
-  ) %>% select(SAMPLE, everything()) 
 
 
 # Ensure CONTIG stays as a factor with proper ordering throughout the analysis
@@ -180,9 +121,9 @@ if (nrow(non_zero_bins) > 0) {
   read_freq$CONTIG <- factor(read_freq$CONTIG, levels = chrom_order)
   non_zero_bins$CONTIG <- factor(non_zero_bins$CONTIG, levels = chrom_order)
   
-  # Set keys for merging
-  setkey(read_freq, CONTIG, BIN_POS)
-  setkey(non_zero_bins, CONTIG, BIN_POS)
+  # Set keys for merging - INCLUDE SAMPLE HERE
+  setkey(read_freq, SAMPLE, CONTIG, BIN_POS)
+  setkey(non_zero_bins, SAMPLE, CONTIG, BIN_POS)
   
   # Update read_freq with genotype from non_zero_bins
   read_freq[non_zero_bins, GENOTYPE := i.Klog]
@@ -206,14 +147,14 @@ read_freq$CONTIG <- factor(read_freq$CONTIG, levels = chrom_order)
 # Prepare output for each chromosome
 cat("Writing results to disk...\n")
 
-# Sort by chromosome (in numeric order) and bin position
+# Sort by sample, chromosome (in numeric order) and bin position
 read_freq <- read_freq %>%
   # Ensure chromosome ordering once more
   mutate(CONTIG = factor(CONTIG, levels = chrom_order)) %>%
-  arrange(CONTIG, BIN_POS)
+  arrange(SAMPLE,CONTIG, BIN_POS)
 
 # Save detailed binned results
-output_file <- paste0(output_prefix, "_bin_genotypes.tsv")
+output_file <- paste0(output_prefix,"_bzea_bin_genotypes.tsv")
 write.table(read_freq, output_file, sep = "\t", row.names = FALSE, quote = FALSE)
 cat(paste("Detailed bin results saved to:", output_file, "\n"))
 
@@ -239,80 +180,86 @@ find_alt_segments <- function(bed_data) {
   # Create empty data.table for results
   all_segments <- data.table()
   
-  # Process each chromosome separately in the correct order
-  cat("Processing chromosomes for ALT segments...\n")
-  
-  for (chr in chrom_order) {
-    # Skip chromosomes not in the data
-    if (!(chr %in% bed_data$chrom)) {
-      next
-    }
+  # Process each sample separately
+  for (samp in unique(bed_data$sample)) {
+    cat("Processing sample:", samp, "\n")
     
-    cat("  Processing", chr, "...\n")
-    chr_data <- bed_data[chrom == chr]
+    # Get data for this sample only
+    sample_data <- bed_data[sample == samp]
     
-    # Sort by start position within chromosome
-    setorder(chr_data, start)
-    
-    # Create a state column (1 for ALT, 0 for others)
-    chr_data[, state := ifelse(genotype == "ALT", 1, 0)]
-    
-    # Skip if no ALT segments
-    if (sum(chr_data$state) == 0) {
-      cat("    No ALT segments found in", chr, "\n")
-      next
-    }
-    
-    # Run length encoding to find consecutive segments with same state
-    rle_result <- rle(chr_data$state)
-    
-    # Calculate segment boundaries
-    segment_ends <- cumsum(rle_result$lengths)
-    segment_starts <- c(1, segment_ends[-length(segment_ends)] + 1)
-    
-    # Create segments data frame
-    segments <- data.table(
-      state = rle_result$values,
-      start_idx = segment_starts,
-      end_idx = segment_ends
-    )
-    
-    # Extract only ALT segments
-    alt_segments <- segments[state == 1]
-    
-    # If there are ALT segments, process them
-    if (nrow(alt_segments) > 0) {
-      # Map indices back to positions
-      for (i in 1:nrow(alt_segments)) {
-        start_idx <- alt_segments$start_idx[i]
-        end_idx <- alt_segments$end_idx[i]
-        
-        # Get the minimum start and maximum end positions for this segment
-        min_start <- min(chr_data$start[start_idx:end_idx])
-        max_end <- max(chr_data$end[start_idx:end_idx])
-        
-        # Calculate mean score for the segment if it exists
-        mean_score <- 0
-        if ("score" %in% colnames(chr_data)) {
-          mean_score <- mean(chr_data$score[start_idx:end_idx])
+    # Process each chromosome separately within this sample
+    for (chr in chrom_order) {
+      # Skip chromosomes not in the data for this sample
+      if (!(chr %in% sample_data$chrom)) {
+        next
+      }
+      
+      cat("  Processing", chr, "for sample", samp, "...\n")
+      chr_data <- sample_data[chrom == chr]
+      
+      # Sort by start position within chromosome
+      setorder(chr_data, start)
+      
+      # Create a state column (1 for ALT, 0 for others)
+      chr_data[, state := ifelse(genotype == "ALT", 1, 0)]
+      
+      # Skip if no ALT segments
+      if (sum(chr_data$state) == 0) {
+        cat("    No ALT segments found in", chr, "for sample", samp, "\n")
+        next
+      }
+      
+      # Run length encoding to find consecutive segments with same state
+      rle_result <- rle(chr_data$state)
+      
+      # Calculate segment boundaries
+      segment_ends <- cumsum(rle_result$lengths)
+      segment_starts <- c(1, segment_ends[-length(segment_ends)] + 1)
+      
+      # Create segments data frame
+      segments <- data.table(
+        state = rle_result$values,
+        start_idx = segment_starts,
+        end_idx = segment_ends
+      )
+      
+      # Extract only ALT segments
+      alt_segments <- segments[state == 1]
+      
+      # If there are ALT segments, process them
+      if (nrow(alt_segments) > 0) {
+        # Map indices back to positions
+        for (i in 1:nrow(alt_segments)) {
+          start_idx <- alt_segments$start_idx[i]
+          end_idx <- alt_segments$end_idx[i]
+          
+          # Get the minimum start and maximum end positions for this segment
+          min_start <- min(chr_data$start[start_idx:end_idx])
+          max_end <- max(chr_data$end[start_idx:end_idx])
+          
+          # Calculate mean score for the segment if it exists
+          mean_score <- 0
+          if ("score" %in% colnames(chr_data)) {
+            mean_score <- mean(chr_data$score[start_idx:end_idx])
+          }
+          
+          # Calculate mean alt_freq for the segment if it exists
+          mean_alt_freq <- 0
+          if ("alt_freq" %in% colnames(chr_data)) {
+            mean_alt_freq <- mean(chr_data$alt_freq[start_idx:end_idx])
+          }
+          
+          # Add to results
+          all_segments <- rbind(all_segments, data.table(
+            sample = samp,
+            chrom = chr,
+            start = min_start,
+            end = max_end,
+            genotype = "ALT",
+            score = mean_score,
+            alt_freq = mean_alt_freq
+          ))
         }
-        
-        # Calculate mean alt_freq for the segment if it exists
-        mean_alt_freq <- 0
-        if ("alt_freq" %in% colnames(chr_data)) {
-          mean_alt_freq <- mean(chr_data$alt_freq[start_idx:end_idx])
-        }
-        
-        # Add to results
-        all_segments <- rbind(all_segments, data.table(
-          sample = chr_data$sample[1],
-          chrom = chr,  # Use the actual chromosome value, not index
-          start = min_start,
-          end = max_end,
-          genotype = "ALT",
-          score = mean_score,
-          alt_freq = mean_alt_freq
-        ))
       }
     }
   }
@@ -320,39 +267,33 @@ find_alt_segments <- function(bed_data) {
   # Make sure chromosomes are still properly ordered in results
   if (nrow(all_segments) > 0) {
     all_segments$chrom <- factor(all_segments$chrom, levels = chrom_order)
-    setorder(all_segments, chrom, start)
+    # Order by sample, chromosome, and start position
+    setorder(all_segments, sample, chrom, start)
     
-    cat("Found", nrow(all_segments), "ALT segments across",
+    # Count segments per sample
+    sample_counts <- all_segments[, .N, by = sample]
+    cat("\nSummary of ALT segments found:\n")
+    for (i in 1:nrow(sample_counts)) {
+      cat("Sample", sample_counts$sample[i], ":", sample_counts$N[i], "segments\n")
+    }
+    
+    cat("Total:", nrow(all_segments), "ALT segments across", 
+        length(unique(all_segments$sample)), "samples and",
         length(unique(all_segments$chrom)), "chromosomes.\n")
+    
     return(all_segments)
   } else {
-    cat("No ALT segments found in any chromosome.\n")
+    cat("No ALT segments found in any sample or chromosome.\n")
     return(NULL)
   }
 }
 
-# Prepare BED data
-bed_data <- read_freq %>%
-  mutate(
-    sample = output_prefix,
-    chrom = CONTIG,  # Make sure this uses the factor with proper ordering
-    start = BIN_START,
-    end = BIN_END,
-    genotype = GENOTYPE,
-    score = as.numeric(factor(GENOTYPE, levels = c("REF", "HET", "ALT"))) - 1,
-    alt_freq = ALT_FREQ
-  ) %>%
-  # Ensure chromosome ordering again
-  mutate(chrom = factor(chrom, levels = chrom_order)) %>%
-  select(sample, chrom, start, end, genotype, score, alt_freq) %>%
-  arrange(chrom, start) %>%  # Sort by chromosome and position
-  as.data.table()
 
 # Find ALT segments
 alt_segments <- find_alt_segments(bed_data)
 
 # Save ALT segments to BED file
-bed_file <- paste0(output_prefix, "_ALT.bed")
+bed_file <- paste0(output_prefix,"_bzea_ALT.bed")
 if (!is.null(alt_segments) && nrow(alt_segments) > 0) {
   # Make sure chromosomes are in the right order for output
   alt_segments$chrom <- factor(alt_segments$chrom, levels = chrom_order)
@@ -369,7 +310,7 @@ if (!is.null(alt_segments) && nrow(alt_segments) > 0) {
 chrom_summary <- read_freq %>%
   # Ensure chromosome ordering
   mutate(CONTIG = factor(CONTIG, levels = chrom_order)) %>%
-  group_by(CONTIG) %>%
+  group_by(SAMPLE,CONTIG) %>%
   summarize(
     total_bins = n(),
     REF_bins = sum(GENOTYPE == "REF", na.rm = TRUE),
