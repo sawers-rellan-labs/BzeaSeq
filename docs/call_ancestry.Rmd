@@ -360,7 +360,7 @@ calculate_nil_frequencies <- function(
     } else {
       matrices$backcross_aa
     }
-    
+    cat("Genotype frequencies : [AA, Aa, aa]\n") 
     # Each backcross: Matrix %*% population_vector
     # This takes weighted average of matrix columns based on current population
     for (i in 1:bc) {
@@ -368,7 +368,6 @@ calculate_nil_frequencies <- function(
       
       # Optional: print intermediate results for debugging
       if (debug_nil) {
-        cat("Genotype frequencies : [AA, Aa, aa]\n") 
         cat("After backcross", i, ": [", 
             round(current_population[1,1], 4), ", ",
             round(current_population[2,1], 4), ", ", 
