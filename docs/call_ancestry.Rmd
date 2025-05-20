@@ -109,7 +109,7 @@ ggpubr::ggarrange(p1, p2, ncol = 2)
 
 ```{r identify-zero-bins}
 # Check how many bins have ALT_FREQ = 0
-zero_alt_bins <- sum(read_freq$ALT_FREQ_WEIGHTED == 0)
+zero_alt_bins <- sum(read_freq$ALT_FREQ == 0)
 total_bins <- nrow(read_freq)
 
 cat("Bins with ALT_FREQ_WEIGHTED = 0:", 
@@ -129,10 +129,10 @@ cat("Bins with ALT_FREQ_WEIGHTED > 0 (to be clustered):",
 
 ```{r transform-nonzero-data}
 # Create transformations for better clustering performance
-non_zero_bins$asin <- asin(sqrt(non_zero_bins$ALT_FREQ_WEIGHTED))
+non_zero_bins$asin <- asin(sqrt(non_zero_bins$ALT_FREQ))
 
 # Visualize distributions of the weighted and transformed data
-p1 <- ggplot(non_zero_bins, aes(x = ALT_FREQ_WEIGHTED)) + 
+p1 <- ggplot(non_zero_bins, aes(x = ALT_FREQ)) + 
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   labs(title = paste("Weighted ALT_FREQ distribution (non-zero bins, ", BIN_SIZE_LABEL, ")", sep=""), 
        x = "ALT_FREQ_WEIGHTED") +
@@ -154,7 +154,7 @@ ggpubr::ggarrange(p1, p2, common.legend = TRUE)
 K <- 3
 
 # Apply K-means clustering with k=3 to each transformation for non-zero bins
-non_zero_bins$K <- as.factor(Ckmeans.1d.dp(non_zero_bins$ALT_FREQ_WEIGHTED, K)$cluster)
+non_zero_bins$K <- as.factor(Ckmeans.1d.dp(non_zero_bins$ALT_FREQ, K)$cluster)
 non_zero_bins$Kasin <- as.factor(Ckmeans.1d.dp(non_zero_bins$asin, K)$cluster)
 
 # Function to relabel clusters as REF, HET, ALT based on ALT_FREQ
@@ -192,7 +192,7 @@ table(non_zero_bins$Kasin) %>% prop.table() %>% round(3)
 ```{r gmm-clustering-nonzero}
 # Fit Gaussian mixture model with 3 components
 normalest <- REBMIX(
-  Dataset = list(data.frame(Value = non_zero_bins$ALT_FREQ_WEIGHTED)),
+  Dataset = list(data.frame(Value = non_zero_bins$ALT_FREQ)),
   Preprocessing = "histogram",
   cmin = 3,  # Force 3 components
   cmax = 3,
@@ -242,7 +242,7 @@ table(read_freq$K) %>% prop.table() %>% round(3)
 
 To compare the different clustering methods, we visualize the data in several ways:
 
-### Scatter plots of ALT_FREQ_WEIGHTED colored by genotype
+### Scatter plots of ALT_FREQ colored by genotype
 
 ```{r scatter-plots, fig.height=12}
 # Define color palette
@@ -252,8 +252,8 @@ pal <- c("REF" = "gold", "HET" = "springgreen4", "ALT" = "purple4")
 create_scatter <- function(data, method_col, title) {
   data %>%
     mutate(POS = BIN_POS * BIN_SIZE) %>%
-    ggplot(aes(x = POS, y = ALT_FREQ_WEIGHTED, col = .data[[method_col]])) +
-        labs(title = title, x = "Position (Mb)", y = "ALT_FREQ_WEIGHTED", color = "Genotype") +
+    ggplot(aes(x = POS, y = ALT_FREQ, col = .data[[method_col]])) +
+        labs(title = title, x = "Position (Mb)", y = "ALT_FREQ", color = "Genotype") +
     geom_point(size = 1, alpha = 0.7) +
     scale_color_manual(values = pal) +
     facet_wrap(.~CONTIG,ncol=10, scales = "free_x", strip.position = "bottom") +
@@ -264,9 +264,9 @@ create_scatter <- function(data, method_col, title) {
 read_freq$CONTIG <-factor(read_freq$CONTIG, levels= paste0("chr",1:10))
   
 # Create scatter plots for each method
-p1 <- create_scatter(read_freq, "K", paste("K-means on weighted ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
-p2 <- create_scatter(read_freq, "Kasin", paste("K-means on arcsin transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
-p3 <- create_scatter(read_freq, "Kgmm", paste("Gaussian mixture model on weighted ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p1 <- create_scatter(read_freq, "K", paste("K-means on  ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p2 <- create_scatter(read_freq, "Kasin", paste("K-means on arcsin sqrt ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p3 <- create_scatter(read_freq, "Kgmm", paste("Gaussian mixture model on ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
 
 
 # Display all scatter plots
@@ -415,19 +415,20 @@ nil_frequencies_for_hmm <- function(bc, s, donor_type = "aa", from = c(0,1,0)) {
   return(hmm_frequencies)
 }
 
-bc2s3 <- nil_frequencies_for_hmm(bc=2,s=3)
+bc2s3 <- nil_frequencies_for_hmm(bc=2,s=3, donor_type = "aa")
 
 cat("Expected genotype frequencies for BC2S3:\n")
-cat("REF:", round(bc2s3["REF"], 4), "\n")
-cat("HET:", round(bc2s3["HET"], 4), "\n") 
-cat("ALT:", round(bc2s3["ALT"], 4), "\n")
+print(bc2s3)
 ```
 
 ### HMM Smoothing Function
 
 ```{r hmm-smoothing-function}
 # Function to apply HMM smoothing to ancestry calls
-smooth_ancestry_with_hmm <- function(genotypes, transitions = c(0.96, 0.04)) {
+smooth_ancestry_with_hmm <- function(
+    genotypes, 
+    transitions = c(0.99, 0.01) # 1Mb=1cM, you could add genetic map to this.
+    ) {
   # Convert genotypes to numeric (0=REF, 1=HET, 2=ALT)
   geno_numeric <- as.numeric(factor(genotypes, levels=c("REF", "HET", "ALT"))) - 1
   
@@ -642,7 +643,7 @@ all_freq %>%
 
 ```{r method-agreement}
 # Calculate agreement between methods including HMM versions
-methods <- c("K", "Klog", "Kasin", "Kgmm", "K_HMM", "Klog_HMM", "Kasin_HMM", "Kgmm_HMM")
+methods <- c("K", "Kasin", "Kgmm", "K_HMM", "Kasin_HMM", "Kgmm_HMM")
 agreement_matrix <- matrix(NA, length(methods), length(methods))
 colnames(agreement_matrix) <- methods
 rownames(agreement_matrix) <- methods
@@ -855,7 +856,7 @@ Based on this comprehensive analysis of ancestry calling methods with HMM smooth
    - Validate results with independent markers or phenotypic data when available
 
 3. **Parameter Optimization**: 
-   - HMM transition probabilities (currently 0.995 stay, 0.005 switch) may need adjustment based on:
+   - HMM transition probabilities (currently 0.99 stay, 0.01 switch , this is related to the approximatiopn 1Mb ~ 1cM) may need adjustment based on:
      - Linkage map resolution
      - Expected recombination frequency
      - Specific breeding design
