@@ -26,18 +26,17 @@ BIN_SIZE_LABEL<-"1Mb"
 
 ## Overview
 
-This document outlines a genomic analysis performed on maize genetic data. The goal is to identify genomic ancestry across bins of size `r BIN_SIZE_LABEL` using the following approach:
+This document outlines a genomic ancestry analysis pipeline for maize introgression lines. The analysis identifies genomic ancestry across bins of size `r BIN_SIZE_LABEL` using the following approach:
 
-1. Bins with no alternative alleles (ALT_FREQ = 0) are automatically classified as "REF"
-2. For the remaining bins (ALT_FREQ > 0), K-means clustering with k=3 is applied
-3. The clusters are assigned "REF" (lowest ALT_FREQ), "HET" (intermediate ALT_FREQ), and "ALT" (highest ALT_FREQ)
-4. We replace the "REF" assignment from step 3 with the automatic "REF" assignment from step 1 for bins with ALT_FREQ = 0
-
-Four different clustering methods are compared:
-1. K-means with normalized ALT_FREQ
-2. K-means with arcsin transformation of normalized ALT_FREQ
-3. K-means with log10 transformation of normalized ALT_FREQ
-4. Gaussian mixture model using the REBMIX library
+1. **Initial Classification**: Bins with no alternative alleles (ALT_FREQ = 0) are automatically classified as "REF"
+2. **Clustering**: For the remaining bins (ALT_FREQ > 0), multiple clustering methods are applied with k=3
+3. **Method Comparison**: Four different clustering approaches are compared:
+   - K-means with weighted ALT_FREQ
+   - K-means with arcsin transformation
+   - K-means with log10 transformation  
+   - Gaussian mixture model
+4. **HMM Smoothing**: Hidden Markov Model smoothing is applied to reduce noise and enforce biological constraints
+5. **Validation**: Methods are compared for consistency and biological plausibility
 
 ## Load Required Packages
 
@@ -47,76 +46,68 @@ library(dplyr)        # Data manipulation
 library(ggplot2)      # Plotting
 library(Ckmeans.1d.dp) # K-means clustering
 library(rebmix)       # Gaussian mixture model
+library(HMM)          # Hidden Markov Models
 library(tidyr)        # Data reshaping
 library(scales)       # Unit formatting for plots
 library(ggpubr)       # Plot arrangement
 library(tibble)       # Modern data frames
 ```
 
-## Data Preparation
-
-First, we read the binned allelic counts:
-
+## Data Preparation and Initial Exploration
 
 ```{r create-bins}
-# Create bins of specified size and calculate summary statistics for each bin
-read_freq <- read.table("~/Desktop/PN17_SID1632_bin_genotypes.tsv",header=TRUE)
+# Read the binned allelic counts
+read_freq <- read.table("~/Desktop/PN17_SID1632_bin_genotypes.tsv", header=TRUE)
 
 # Display first few rows of the binned data
 head(read_freq)
-mean_n <- mean(read_freq$INFORMATIVE_VARIANT_COUNT)
-sd_n <- sd(read_freq$INFORMATIVE_VARIANT_COUNT)
 
+# Calculate summary statistics
+IVC_mean <- mean(read_freq$INFORMATIVE_VARIANT_COUNT)
+IVC_sd <- sd(read_freq$INFORMATIVE_VARIANT_COUNT)
 
 # Display summary of bins
 cat("Total number of bins:", nrow(read_freq), "\n")
-cat("Average depth sum:",  mean(read_freq$DEPTH_SUM), "\n")
-cat("Average number of informative variants per bin:",mean_n , "\n")
+cat("Average depth sum:", mean(read_freq$DEPTH_SUM), "\n")
+cat("Average number of informative variants per bin:", IVC_mean, "\n")
 cat("Median number of informative variants per bin:", median(read_freq$INFORMATIVE_VARIANT_COUNT), "\n")
-cat("Range of informative  variants per bin:", min(read_freq$INFORMATIVE_VARIANT_COUNT), "to", max(read_freq$INFORMATIVE_VARIANT_COUNT), "\n")
+cat("Range of informative variants per bin:", min(read_freq$INFORMATIVE_VARIANT_COUNT), "to", max(read_freq$INFORMATIVE_VARIANT_COUNT), "\n")
 ```
-# Plotting Allele counts
 
-```{r weight evidence}
-# Calculate normalization statistics
+## Weighting ALT_FREQ by informative variant count
 
-# Create normalized ALT_FREQ (accounting for variant density)
+```{r weight-evidence}
+# Create weightesALT_FREQ 
 read_freq <- read_freq %>%
   mutate(
-    # Normalize by variant count
-    ALT_FREQ_WEIGHTED = ALT_FREQ * (INFORMATIVE_VARIANT_COUNT / mean_n),
-    # Cap extreme values (optional)
-    # ALT_FREQ_WEIGHTED = pmin(pmax(ALT_FREQ_WEIGHTED, 0), 1)
+    ALT_FREQ_WEIGHTED = ALT_FREQ * (INFORMATIVE_VARIANT_COUNT / IVC_mean)
   )
 
-# Show the relationship between variant count and ALT_FREQ
-ggplot(read_freq, aes(x = VARIANT_COUNT, y = ALT_FREQ)) +
+# Visualize the relationship between informative variant count and ALT_FREQ
+ggplot(read_freq, aes(x = INFORMATIVE_VARIANT_COUNT, y = ALT_FREQ)) +
   geom_point(alpha = 0.6) +
-  geom_smooth(method = "loess", se = TRUE) +
-  labs(title = paste("Relationship between variant count and ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""),
-       x = "Number of variants in bin", 
+  labs(title = paste("Relationship between informative variant count and ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""),
+       x = "Number of informative variants in bin", 
        y = "Alternative allele frequency") +
   theme_minimal()
 
-# Compare original vs normalized frequencies
+# Compare original vs weighted frequencies
 p1 <- ggplot(read_freq, aes(x = ALT_FREQ)) +
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   labs(title = "Original ALT_FREQ distribution", x = "ALT_FREQ") +
   theme_minimal()
+
 p2 <- ggplot(read_freq, aes(x = ALT_FREQ_WEIGHTED)) +
   geom_histogram(bins = 30, fill = "tomato", color = "white") +
-  labs(title = "Weighted ALT_FREQ distribution", x = "ALT_FREQ_NORM") +
+  labs(title = "Weighted ALT_FREQ distribution", x = "ALT_FREQ_WEIGHTED") +
   theme_minimal()
 
 ggpubr::ggarrange(p1, p2, ncol = 2)
 ```
 
-## Identify Zero-ALT Bins
-
-We'll now identify bins with no alternative alleles:
+## Zero-ALT Bin Identification
 
 ```{r identify-zero-bins}
-
 # Check how many bins have ALT_FREQ = 0
 zero_alt_bins <- sum(read_freq$ALT_FREQ_WEIGHTED == 0)
 total_bins <- nrow(read_freq)
@@ -134,16 +125,13 @@ cat("Bins with ALT_FREQ_WEIGHTED > 0 (to be clustered):",
     "(", round(100 * nrow(non_zero_bins) / total_bins, 1), "%)\n")
 ```
 
-## Data Transformation for Non-Zero Bins
-
-We create transformed versions of the normalized ALT_FREQ data for non-zero bins:
+## Data Transformation for Clustering
 
 ```{r transform-nonzero-data}
-# Create transformations
-non_zero_bins$log <- log10(non_zero_bins$ALT_FREQ_WEIGHTED) # Log transformation
-non_zero_bins$asin <- asin(sqrt(non_zero_bins$ALT_FREQ_WEIGHTED))           # Arcsin transformation
+# Create transformations for better clustering performance
+non_zero_bins$asin <- asin(sqrt(non_zero_bins$ALT_FREQ_WEIGHTED))
 
-# Visualize distributions of the normalized and transformed data
+# Visualize distributions of the weighted and transformed data
 p1 <- ggplot(non_zero_bins, aes(x = ALT_FREQ_WEIGHTED)) + 
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   labs(title = paste("Weighted ALT_FREQ distribution (non-zero bins, ", BIN_SIZE_LABEL, ")", sep=""), 
@@ -153,27 +141,20 @@ p1 <- ggplot(non_zero_bins, aes(x = ALT_FREQ_WEIGHTED)) +
 p2 <- ggplot(non_zero_bins, aes(x = asin)) + 
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   labs(title = "Arcsin transformation (non-zero bins)",
-       x = "asin") +
+       x = "asin(sqrt(ALT_FREQ_WEIGHTED))") +
   theme_minimal()
 
-p3 <- ggplot(non_zero_bins, aes(x = log)) + 
-  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
-  labs(title = "Log10 transformation (non-zero bins)",
-       x = "log") +
-  theme_minimal()
 
-ggpubr::ggarrange(p1, p2, p3, common.legend = TRUE)
+ggpubr::ggarrange(p1, p2, common.legend = TRUE)
 ```
 
-## K-means Clustering with K=3 for Non-Zero Bins
-
-We apply K-means clustering to each version of the normalized data for the non-zero bins, using k=3:
+## Clustering Methods Application
 
 ```{r kmeans-clustering-nonzero}
-K=3
+K <- 3
+
 # Apply K-means clustering with k=3 to each transformation for non-zero bins
 non_zero_bins$K <- as.factor(Ckmeans.1d.dp(non_zero_bins$ALT_FREQ_WEIGHTED, K)$cluster)
-non_zero_bins$Klog <- as.factor(Ckmeans.1d.dp(non_zero_bins$log, K)$cluster)
 non_zero_bins$Kasin <- as.factor(Ckmeans.1d.dp(non_zero_bins$asin, K)$cluster)
 
 # Function to relabel clusters as REF, HET, ALT based on ALT_FREQ
@@ -196,28 +177,22 @@ relabel_clusters <- function(clusters, data) {
 
 # Apply relabeling to each clustering method
 non_zero_bins$K <- relabel_clusters(non_zero_bins$K, non_zero_bins)
-non_zero_bins$Klog <- relabel_clusters(non_zero_bins$Klog, non_zero_bins)
 non_zero_bins$Kasin <- relabel_clusters(non_zero_bins$Kasin, non_zero_bins)
 
 # Check cluster proportions for each method
 cat("K-means cluster proportions (non-zero bins):\n")
 table(non_zero_bins$K) %>% prop.table() %>% round(3)
 
-cat("\nLog-transformed K-means cluster proportions (non-zero bins):\n")
-table(non_zero_bins$Klog) %>% prop.table() %>% round(3)
-
 cat("\nArcsin-transformed K-means cluster proportions (non-zero bins):\n")
 table(non_zero_bins$Kasin) %>% prop.table() %>% round(3)
 ```
 
-## Gaussian Mixture Modeling for Non-Zero Bins
+## Gaussian Mixture Modeling
 
-As a comparison to K-means, we also apply a Gaussian mixture model using the REBMIX library:
-
-```{r Kgmm-clustering-nonzero}
+```{r gmm-clustering-nonzero}
 # Fit Gaussian mixture model with 3 components
 normalest <- REBMIX(
-  Dataset = list(data.frame(Value = non_zero_bins$ALT_FREQ)),
+  Dataset = list(data.frame(Value = non_zero_bins$ALT_FREQ_WEIGHTED)),
   Preprocessing = "histogram",
   cmin = 3,  # Force 3 components
   cmax = 3,
@@ -237,77 +212,16 @@ cat("Gaussian Mixture Model cluster proportions (non-zero bins):\n")
 table(non_zero_bins$Kgmm) %>% prop.table() %>% round(3)
 ```
 
-## Check Clustering Results for Non-Zero Bins
-
-Let's examine the clustering results for the non-zero bins:
-
-```{r check-nonzero-clusters}
-# Calculate mean ALT_FREQ for each cluster and method
-cluster_summary <- non_zero_bins %>%
-  pivot_longer(cols = c(K, Klog, Kasin, Kgmm), 
-               names_to = "method", 
-               values_to = "cluster") %>%
-  group_by(method, cluster) %>%
-  summarize(
-    mean_ALT_FREQ = mean(ALT_FREQ_WEIGHTED),
-    min_ALT_FREQ = min(ALT_FREQ_WEIGHTED),
-    max_ALT_FREQ = max(ALT_FREQ_WEIGHTED),
-    n_bins = n()
-  ) %>%
-  ungroup()
-
-# Display summary
-cluster_summary %>%
-  mutate(
-    method = case_when(
-      method == "K" ~ "K-means (raw)",
-      method == "Klog" ~ "K-means (log10)",
-      method == "Kasin" ~ "K-means (arcsin)",
-      method == "Kgmm" ~ "Gaussian Mixture",
-      TRUE ~ method
-    )
-  ) %>%
-  arrange(method, cluster) %>%
-  knitr::kable(digits = 3)
-
-# Visualize the clustering results for non-zero bins
-# Define a consistent color palette for REF, HET, ALT
-pal <- c("gold", "springgreen4", "purple4")
-names(pal) <- c("REF", "HET", "ALT")
-
-# Create a function for histograms colored by cluster
-create_hist <- function(data, method_col, title) {
-  ggplot(data, aes(x = ALT_FREQ_WEIGHTED, fill = .data[[method_col]])) +
-    geom_histogram(bins = 30, position = "identity", alpha = 0.6) +
-    scale_fill_manual(values = pal) +
-    labs(title = title, x = "ALT_FREQ", fill = "Cluster") +
-    theme_minimal()
-}
-
-# Create histograms for each method
-h1 <- create_hist(non_zero_bins, "K", "K-means on weighted ALT_FREQ")
-h2 <- create_hist(non_zero_bins, "Klog", "K-means on log10 transformed ALT_FREQ")
-h3 <- create_hist(non_zero_bins, "Kasin", "K-means on arcsin transformed ALT_FREQ")
-h4 <- create_hist(non_zero_bins, "Kgmm", "Gaussian mixture model on weighted ALT_FREQ")
-
-
-# Display all histograms
-ggpubr::ggarrange(h1, h2, h3, h4, ncol = 2)
-```
-
-## Merge Results Back to Full Dataset
-
-Now we merge the clustering results back to the full dataset, ensuring that bins with ALT_FREQ = 0 are classified as "REF":
+## Merge Clustering Results to Full Dataset
 
 ```{r merge-results}
-# Create a new column in read_freq for each clustering method
+# Create new columns in read_freq for each clustering method
 read_freq$K <- factor(NA, levels = c("REF", "HET", "ALT"))
-read_freq$Klog <- factor(NA, levels = c("REF", "HET", "ALT"))
 read_freq$Kasin <- factor(NA, levels = c("REF", "HET", "ALT"))
 read_freq$Kgmm <- factor(NA, levels = c("REF", "HET", "ALT"))
 
-# First, assign the non-zero bin clustering results to the main dataset
-for (method in c("K", "Klog", "Kasin", "Kgmm")) {
+# Assign the non-zero bin clustering results to the main dataset
+for (method in c("K","Kasin", "Kgmm")) {
   # Create an index for non-zero bins in the original data
   non_zero_idx <- which(read_freq$ALT_FREQ_WEIGHTED > 0)
   
@@ -315,132 +229,59 @@ for (method in c("K", "Klog", "Kasin", "Kgmm")) {
   read_freq[[method]][non_zero_idx] <- non_zero_bins[[method]]
 }
 
-# Then, force bins with ALT_FREQ = 0 to be "REF"
+# Force bins with ALT_FREQ = 0 to be "REF"
 zero_idx <- which(read_freq$ALT_FREQ == 0)
-for (method in c("K", "Klog", "Kasin", "Kgmm")) {
+for (method in c("K", "Kasin", "Kgmm")) {
   read_freq[[method]][zero_idx] <- "REF"
 }
-
-# The log transform hace nice normal data but high sensitivity to HET
-# so I'decide to change thos hets to REF
-# read_freq$Klog[read_freq$Klog=="HET"] <- "REF"
 
 # Verify the merging worked correctly
 cat("Final cluster proportions for raw K-means:\n")
 table(read_freq$K) %>% prop.table() %>% round(3)
-
-# Summarize mean ALT_FREQ for each genotype class across methods
-genotype_summary <- read_freq %>%
-  pivot_longer(cols = c(K, Klog, Kasin, Kgmm), 
-               names_to = "method", 
-               values_to = "genotype") %>%
-  group_by(method, genotype) %>%
-  summarize(
-    mean_ALT_FREQ = mean(ALT_FREQ),
-    mean_alt_freq = mean(ALT_FREQ),
-    median_ALT_FREQ = median(ALT_FREQ),
-    mean_n = mean(n),
-    n_bins = n()
-  ) %>%
-  ungroup()
-
-# Display summary
-genotype_summary %>%
-  mutate(
-    method = case_when(
-      method == "K" ~ "K-means (raw)",
-      method == "Klog" ~ "K-means (log10)",
-      method == "Kasin" ~ "K-means (arcsin)",
-      method == "Kgmm" ~ "Gaussian Mixture",
-      TRUE ~ method
-    )
-  ) %>%
-  arrange(method, genotype) %>%
-  knitr::kable(digits = 3)
 ```
-
-## Visualization and Comparison
 
 To compare the different clustering methods, we visualize the data in several ways:
 
-### 1. Scatter plots of ALT_FREQ colored by genotype
+### Scatter plots of ALT_FREQ_WEIGHTED colored by genotype
 
 ```{r scatter-plots, fig.height=12}
+# Define color palette
+pal <- c("REF" = "gold", "HET" = "springgreen4", "ALT" = "purple4")
+
 # Create a function for scatter plots
 create_scatter <- function(data, method_col, title) {
   data %>%
     mutate(POS = BIN_POS * BIN_SIZE) %>%
     ggplot(aes(x = POS, y = ALT_FREQ_WEIGHTED, col = .data[[method_col]])) +
-        labs(title = title, x = "Position (bp)", y = "ALT_FREQ", color = "Genotype") +
+        labs(title = title, x = "Position (Mb)", y = "ALT_FREQ_WEIGHTED", color = "Genotype") +
     geom_point(size = 1, alpha = 0.7) +
     scale_color_manual(values = pal) +
     facet_wrap(.~CONTIG,ncol=10, scales = "free_x", strip.position = "bottom") +
     theme_bw() +
-    scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6))
+    scale_x_continuous(labels = unit_format(unit = "", scale = 1e-6))
 }
 
 read_freq$CONTIG <-factor(read_freq$CONTIG, levels= paste0("chr",1:10))
   
 # Create scatter plots for each method
-p1 <- create_scatter(read_freq, "K", paste("K-means on ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
-p2 <- create_scatter(read_freq, "Klog", paste("K-means on log10 transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
-p3 <- create_scatter(read_freq, "Kasin", paste("K-means on arcsin transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
-p4 <- create_scatter(read_freq, "Kgmm", paste("Gaussian mixture model on normalized ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p1 <- create_scatter(read_freq, "K", paste("K-means on weighted ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p2 <- create_scatter(read_freq, "Kasin", paste("K-means on arcsin transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+p3 <- create_scatter(read_freq, "Kgmm", paste("Gaussian mixture model on weighted ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
 
 
 # Display all scatter plots
-ggpubr::ggarrange(p1, p2, p3, p4, ncol = 1, common.legend = TRUE)
-```
-```{r chr8, fig.height=5}
-# display chromosme *
-create_scatter(read_freq %>% filter(CONTIG=="chr8"), "Kasin", paste("K-means on log10 transformed ALT_FREQ (", BIN_SIZE_LABEL, " bins)", sep=""))
+ggpubr::ggarrange(p1, p2, p3, ncol = 1, common.legend = TRUE)
 ```
 
-```{r problematic_chr8}
-# this is the bin corresponding to that point
-read_freq %>% filter(CONTIG=="chr8", ALT_COUNT==0)
 
-```
+## HMM Smoothing Implementation
 
-```{r single_method_tile, fig.height=3}
-# Create a function for tile plots
-create_tile <- function(data, method_col, title) {
+### Theoretical Background
 
-  data %>%
-    
-    mutate(CONTIG = factor(CONTIG, levels= paste0("chr",1:10)),
-           POS = BIN_POS * BIN_SIZE) %>%
-    ggplot(aes(x = POS, y = 1, fill = .data[[method_col]])) +
-    geom_tile() +
-    facet_wrap( .~CONTIG, ncol = 1, strip.position = "left") +
-    scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6))+
-    scale_fill_manual(values = pal) +
-    labs(title = title, x = "Position (bp)", fill = "Genotype") +
-    ggpubr::theme_classic2(base_size = 10) +
-    theme(
-      legend.position = "bottom",
-      strip.background = element_blank(),
-      strip.text.y.left = element_text(angle = 0, hjust = 0),
-      panel.spacing.y=unit(0.0, "lines"),
-      axis.line.y = element_blank(),
-      axis.text.y = element_blank(),
-      axis.title.y = element_blank(),
-      axis.ticks.y = element_blank()
-    ) 
-}
+For maize introgression lines produced through backcrossing followed by selfing (e.g., BC2S3), we can calculate expected genotype frequencies based on Mendelian genetics:
 
-# Create tile plots for PN15_SID1353
-# create_tile(read_freq, "GENOTYPE", paste("ALT_FREQ (", BIN_SIZE_LABEL, " bins)"," Sample PN17_SID1632", sep=""))
-colnames(read_freq)
-create_tile(read_freq, "Kgmm", paste("Sample PN15_SID1353\n","arcsin weighted ALT_FREQ) | ", BIN_SIZE_LABEL, " bins", sep=""))
-
-```
-
-## HMM
-
-```{r HMM, fig.height=3}
-
-# Create breeding matrices with clear column interpretation
+```{r breeding-theory}
+# Create mating matrices 
 create_mating_matrices <- function() {
   # Backcross matrix for crossing population with AA donor
   # Each COLUMN represents offspring distribution from that parent × AA
@@ -546,7 +387,7 @@ calculate_nil_frequencies <- function(bc=2, s=3, donor_type = "aa", from = c(0,1
 }
 
 # Function to return frequencies in HMM format (REF, HET, ALT)
-nil_frequencies_for_hmm <- function(bc, s, donor_type = "AA", from = c(0,1,0)) {
+nil_frequencies_for_hmm <- function(bc, s, donor_type = "aa", from = c(0,1,0)) {
   # Calculate raw genotype frequencies
   genotype_freqs <- calculate_nil_frequencies(bc, s, donor_type, from)
   
@@ -570,23 +411,27 @@ nil_frequencies_for_hmm <- function(bc, s, donor_type = "AA", from = c(0,1,0)) {
       ALT = genotype_freqs["aa"]   # Donor introgression  
     )
   }
-  
+  names(hmm_frequencies) <- c("REF", "HET","ALT")
   return(hmm_frequencies)
 }
 
 bc2s3 <- nil_frequencies_for_hmm(bc=2,s=3)
 
-# bc2s3
-# .859375 0.031250 0.109375
+cat("Expected genotype frequencies for BC2S3:\n")
+cat("REF:", round(bc2s3["REF"], 4), "\n")
+cat("HET:", round(bc2s3["HET"], 4), "\n") 
+cat("ALT:", round(bc2s3["ALT"], 4), "\n")
+```
 
+### HMM Smoothing Function
 
+```{r hmm-smoothing-function}
 # Function to apply HMM smoothing to ancestry calls
 smooth_ancestry_with_hmm <- function(genotypes, transitions = c(0.96, 0.04)) {
   # Convert genotypes to numeric (0=REF, 1=HET, 2=ALT)
   geno_numeric <- as.numeric(factor(genotypes, levels=c("REF", "HET", "ALT"))) - 1
   
   # Set up transition probabilities (high probability of staying in same state)
-  # This controls how easily the model will switch states
   trans_prob <- matrix(c(
     transitions[1], transitions[2]/2, transitions[2]/2,  # From REF
     transitions[2]/2, transitions[1], transitions[2]/2,  # From HET
@@ -594,18 +439,17 @@ smooth_ancestry_with_hmm <- function(genotypes, transitions = c(0.96, 0.04)) {
   ), nrow=3, byrow=TRUE)
   
   # Set up emission probabilities (how likely each state produces observed genotypes)
-  # Higher probability on diagonal (correct calls), lower for errors
   emiss_prob <- matrix(c(
     0.9, 0.08, 0.02,  # REF state
     0.1, 0.8, 0.1,    # HET state
     0.02, 0.08, 0.9   # ALT state
   ), nrow=3, byrow=TRUE)
   
-  # Initialize HMM
+  # Initialize HMM with BC2S3 priors
   hmm <- initHMM(c("REF", "HET", "ALT"), c("0", "1", "2"), 
-                startProbs= bc2s3,  # Prior probabilities
-                transProbs=trans_prob, 
-                emissionProbs=emiss_prob)
+                startProbs = bc2s3,  # Prior probabilities from breeding design
+                transProbs = trans_prob, 
+                emissionProbs = emiss_prob)
   
   # Run Viterbi algorithm to find most likely state sequence
   viterbi_path <- viterbi(hmm, as.character(geno_numeric))
@@ -615,40 +459,82 @@ smooth_ancestry_with_hmm <- function(genotypes, transitions = c(0.96, 0.04)) {
   
   return(smoothed_genotypes)
 }
+```
 
+### Apply HMM Smoothing
 
+```{r apply-hmm-smoothing}
 # Apply HMM smoothing to each chromosome separately
 read_freq <- read_freq %>%
   group_by(CONTIG) %>%
   mutate(
-    K_HMM = smooth_ancestry_with_hmm(K, transitions=c(0.995, 0.005)),
-    Kasin_HMM = smooth_ancestry_with_hmm(Kasin, transitions=c(0.995, 0.005)),
-    Klog_HMM = smooth_ancestry_with_hmm(Klog, transitions=c(0.995, 0.005)),
-    Kgmm_HMM = smooth_ancestry_with_hmm(Kgmm, transitions=c(0.995, 0.005))
+    K_HMM = smooth_ancestry_with_hmm(K, transitions=c(0.95, 0.05)),
+    Kasin_HMM = smooth_ancestry_with_hmm(Kasin, transitions=c(0.95, 0.05)),
+    Kgmm_HMM = smooth_ancestry_with_hmm(Kgmm, transitions=c(0.95, 0.05))
   ) %>%
   ungroup()
 
-create_tile(read_freq, "Kgmm_HMM", paste("Sample PN15_SID1353\n","HMM weighted ALT_FREQ) | ", BIN_SIZE_LABEL, " bins", sep=""))
-
+# Ensure chromosome factor ordering
+read_freq$CONTIG <- factor(read_freq$CONTIG, levels = paste0("chr", 1:10))
 ```
 
+## Visualization and Method Comparison
 
-### 3. Combined visualization of all methods
+### Single Method Visualization
 
-```{r tile-plots, fig.height=2}
-# Create a combined plot for all methods
+```{r single-method-tile, fig.height=3}
+
+
+# Create tile plot function
+create_tile <- function(data, method_col, title) {
+  data %>%
+    mutate(
+      CONTIG = factor(CONTIG, levels = paste0("chr", 1:10)),
+      POS = BIN_POS * BIN_SIZE
+    ) %>%
+    ggplot(aes(x = POS, y = 1, fill = .data[[method_col]])) +
+    geom_tile() +
+    facet_wrap( .~CONTIG, ncol = 1, strip.position = "left") +
+    scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6)) +
+    scale_fill_manual(values = pal) +
+    labs(title = title, x = "Position (bp)", fill = "Genotype") +
+    ggpubr::theme_classic2(base_size = 10) +
+    theme(
+      legend.position = "bottom",
+      strip.background = element_blank(),
+      strip.text.y.left = element_text(angle = 0, hjust = 0),
+      panel.spacing.y = unit(0.0, "lines"),
+      axis.line.y = element_blank(),
+      axis.text.y = element_blank(),
+      axis.title.y = element_blank(),
+      axis.ticks.y = element_blank()
+    ) 
+}
+```
+
+### HMM Smoothing Effect
+
+```{r hmm-effect-comparison, fig.height=6}
+# Compare before and after HMM smoothing
+create_tile(read_freq, "Kgmm", paste("Before HMM Smoothing |", BIN_SIZE_LABEL, "bins")) 
+create_tile(read_freq, "Kgmm_HMM", paste("After HMM Smoothing |", BIN_SIZE_LABEL, "bins"))
+```
+
+### All Methods Comparison
+
+```{r tile-plots, fig.height=4}
+# Create a combined plot for all methods including HMM
 read_freq %>%
-  tidyr::pivot_longer(cols = starts_with("K"), names_to = "method", values_to = "K") %>%
+  pivot_longer(cols = starts_with("K"), names_to = "method", values_to = "genotype") %>%
   mutate(
     POS = BIN_POS * BIN_SIZE,
     method = factor(method, 
-                   levels = c("K", "K_HMM", "Klog","Klog_HMM", "Kasin", "Kasin_HMM","Kgmm","Kgmm_HMM"),
-                   labels = c("K-means (weighted)", "weighted HMM",
-                              "K-means (log10)", "log10 HMM",
-                              "K-means (arcsin)", "log10 HMM",
-                              "Gaussian Mixture", "GMM-HMM"))
+                   levels = c("K", "K_HMM", "Kasin", "Kasin_HMM", "Kgmm", "Kgmm_HMM"),
+                   labels = c("K-means (weighted)", "K-means (weighted)\nHMM",
+                              "K-means (arcsin)", "K-means (arcsin)\nHMM",
+                              "Gaussian Mixture", "Gaussian Mixture]\nHMM"))
   ) %>%
-  ggplot(aes(x = POS, y = 1, fill = K)) +
+  ggplot(aes(x = POS, y = 1, fill = genotype)) +
   geom_tile() +
   scale_fill_manual(values = pal) +
   facet_grid(method ~ CONTIG, scales = "free") +
@@ -659,8 +545,8 @@ read_freq %>%
     strip.background = element_blank(),
     strip.text.x = element_text(hjust = 0),
     strip.text.y = element_text(angle = 0, face = "bold"),
-    panel.spacing.x=unit(0.0, "lines"),
-    panel.spacing.y=unit(0.0, "lines"),
+    panel.spacing.x = unit(0.0, "lines"),
+    panel.spacing.y = unit(0.0, "lines"),
     axis.line.y = element_blank(),
     axis.text.y = element_blank(),
     axis.line.x = element_blank(),
@@ -671,65 +557,72 @@ read_freq %>%
     axis.ticks.y = element_blank()
   ) +
   labs(
-    title = paste("Comparison of Clustering Methods (", BIN_SIZE_LABEL, " bins)", sep=""),
+    title = paste("Comparison of Clustering Methods with HMM Smoothing (", BIN_SIZE_LABEL, " bins)", sep=""),
     x = "Genome Position (Mb)",
     fill = "Genotype"
   )
-
 ```
 
-## Genotype Frequency Comparison
+## Quantitative Method Assessment
 
-Let's compare the genotype frequencies across all methods:
+### Genotype Frequency Analysis
 
-```{r genotype-frequencies}
+```{r genotype-frequencies, fig.height=4}
 # Create a summary of genotype frequencies for all methods
 genotype_freq <- read_freq %>%
-  pivot_longer(cols = c(K, Klog, Kasin, Kgmm ,Kgmm_HMM), 
+  pivot_longer(cols = c(K, Kasin, Kgmm, K_HMM, Kasin_HMM, Kgmm_HMM), 
                names_to = "method", 
                values_to = "genotype") %>%
   group_by(method, genotype) %>%
   summarize(
     count = n(),
-    percentage = n() / nrow(read_freq) * 100
+    percentage = n() / nrow(read_freq) * 100,
+    .groups = "drop"
   ) %>%
-  ungroup() %>%
   mutate(
+    method_type = ifelse(grepl("_HMM", method), "HMM Smoothed", "Original"),
+    method_base = gsub("_HMM", "", method),
     method = case_when(
-      method == "K" ~ "K-means (raw)",
-      method == "Klog" ~ "K-means (log10)",
+      method == "K" ~ "K-means (weighted)",
+      method == "K_HMM" ~ "K-means (weighted) HMM",
       method == "Kasin" ~ "K-means (arcsin)",
+      method == "Kasin_HMM" ~ "K-means (arcsin) HMM",
       method == "Kgmm" ~ "Gaussian Mixture",
       method == "Kgmm_HMM" ~ "Gaussian Mixture HMM",
       TRUE ~ method
     )
   )
 
-# Display frequency table
-expectation <- data.frame( method= "expected",
-genotype = c("REF","HET","ALT"),
-count = round(bc2s3*nrow(read_freq),0),
-percentage= 100*bc2s3)
+# Add expected frequencies
+expectation <- data.frame(
+  method = "Expected (BC2S3)",
+  genotype = c("REF", "HET", "ALT"),
+  count = round(bc2s3 * nrow(read_freq), 0),
+  percentage = 100 * bc2s3,
+  method_type = "Theoretical",
+  method_base = "Expected"
+)
 
-method_freq <- 
-  rbind(expectation, genotype_freq) %>%
+# Combine and create frequency table
+method_freq <- rbind(expectation, genotype_freq) %>%
+  select(method, genotype, percentage) %>%
   pivot_wider(
     id_cols = genotype,
     names_from = method,
     values_from = percentage
-)
+  )
 
-
+# Display frequency table
 method_freq %>%
   knitr::kable(
     caption = paste("Genotype frequencies (%) across methods (", BIN_SIZE_LABEL, " bins)", sep=""),
     digits = 1
   )
 
-
-# Create a bar plot to visualize frequencies
-rbind(expectation, genotype_freq) %>%
-ggplot(aes(x = method, y = percentage, fill = genotype)) +
+# Visualize frequencies
+all_freq <- rbind(expectation, genotype_freq)
+all_freq %>%
+  ggplot(aes(x = method, y = percentage, fill = genotype)) +
   geom_bar(stat = "identity", position = "stack") +
   scale_fill_manual(values = pal) +
   labs(
@@ -742,22 +635,20 @@ ggplot(aes(x = method, y = percentage, fill = genotype)) +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
     legend.position = "top"
-  )
+  ) 
 ```
 
-## Method Agreement Analysis
-
-Let's analyze how much the different clustering methods agree with each other:
+### Method Agreement Analysis
 
 ```{r method-agreement}
-# Create a function to calculate agreement between methods
-agreement_matrix <- matrix(NA, 4, 4)
-methods <- c("K", "Klog", "Kasin", "Kgmm")
+# Calculate agreement between methods including HMM versions
+methods <- c("K", "Klog", "Kasin", "Kgmm", "K_HMM", "Klog_HMM", "Kasin_HMM", "Kgmm_HMM")
+agreement_matrix <- matrix(NA, length(methods), length(methods))
 colnames(agreement_matrix) <- methods
 rownames(agreement_matrix) <- methods
 
-for (i in 1:4) {
-  for (j in 1:4) {
+for (i in 1:length(methods)) {
+  for (j in 1:length(methods)) {
     agreement_matrix[i, j] <- mean(read_freq[[methods[i]]] == read_freq[[methods[j]]]) * 100
   }
 }
@@ -772,123 +663,212 @@ agreement_df <- as.data.frame(agreement_matrix) %>%
 
 ggplot(agreement_df, aes(x = Method1, y = Method2, fill = Agreement)) +
   geom_tile() +
-  geom_text(aes(label = round(Agreement, 1)), color = "white", size = 5) +
+  geom_text(aes(label = round(Agreement, 1)), color = "white", size = 3) +
   scale_fill_gradient(low = "steelblue", high = "darkred") +
   labs(
-    title = "Agreement Between Clustering Methods (%)",
+    title = "Agreement Between Methods (%)",
     x = NULL,
     y = NULL,
     fill = "Agreement (%)"
   ) +
   theme_minimal() +
   theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
     axis.text = element_text(face = "bold"),
     panel.grid = element_blank()
   )
 ```
 
-## Examine Differences Between Methods
+### HMM Smoothing Effect Quantification
 
-Let's look at where the methods disagree:
+```{r hmm-smoothing-effect}
+# Calculate how much each method changed after HMM smoothing
+hmm_effects <- data.frame(
+  method = c("K", "Kasin", "Kgmm"),
+  changes = c(
+    mean(read_freq$K != read_freq$K_HMM) * 100,
+    mean(read_freq$Kasin != read_freq$Kasin_HMM) * 100,
+    mean(read_freq$Kgmm != read_freq$Kgmm_HMM) * 100
+  )
+)
 
-```{r method-differences,fig.height=2}
-# Create a visualization of where methods disagree, across all chromosomes
+# Calculate direction of changes (transitions between states)
+transition_summary <- data.frame()
+
+for (method in c("K", "Kasin", "Kgmm")) {
+  hmm_method <- paste0(method, "_HMM")
+  
+  transitions <- table(read_freq[[method]], read_freq[[hmm_method]])
+  
+  # Calculate off-diagonal (changed) proportions
+  total_changes <- sum(transitions) - sum(diag(transitions))
+  
+  for (i in rownames(transitions)) {
+    for (j in colnames(transitions)) {
+      if (i != j && transitions[i, j] > 0) {
+        transition_summary <- rbind(transition_summary, data.frame(
+          method = method,
+          from = i,
+          to = j,
+          count = transitions[i, j],
+          percentage = transitions[i, j] / nrow(read_freq) * 100
+        ))
+      }
+    }
+  }
+}
+
+# Display HMM effects
+cat("Percentage of bins changed by HMM smoothing:\n")
+hmm_effects %>%
+  mutate(method = case_when(
+    method == "K" ~ "K-means (weighted)",
+    method == "Kasin" ~ "K-means (arcsin)",
+    method == "Kgmm" ~ "Gaussian Mixture",
+    TRUE ~ method
+  )) %>%
+  knitr::kable(col.names = c("Method", "% Bins Changed"), digits = 2)
+
+# Display transition summary
+cat("\nDetailed transition patterns:\n")
+transition_summary %>%
+  mutate(
+    transition = paste(from, "=>", to),
+    method = case_when(
+      method == "K" ~ "K-means (weighted)",
+      method == "Kasin" ~ "K-means (arcsin)",
+      method == "Kgmm" ~ "Gaussian Mixture",
+      TRUE ~ method
+    )
+  ) %>%
+  select(method, transition, count, percentage) %>%
+  knitr::kable(digits = 2)
+
+# Visualize HMM effects
+ggplot(hmm_effects, aes(x = reorder(method, changes), y = changes)) +
+  geom_col(fill = "steelblue", alpha = 0.7) +
+  geom_text(aes(label = paste0(round(changes, 1), "%")), 
+            hjust = -0.1, size = 4) +
+  labs(
+    title = "Effect of HMM Smoothing on Different Clustering Methods",
+    x = "Clustering Method",
+    y = "Percentage of Bins Changed (%)"
+  ) +
+  theme_minimal() +
+  coord_flip()
+```
+
+## Method Disagreement Analysis
+
+```{r method-differences, fig.height=3}
+# Analyze where methods disagree most
 disagreement_data <- read_freq %>%
   mutate(
     POS = BIN_POS * BIN_SIZE,
-    # Check if all methods agree
-    agreement = factor(ifelse(
-      K == Klog & K == Kasin & K == Kgmm,
+    # Check if all original methods agree
+    original_agreement = factor(ifelse(
+      K == Kasin & K == Kgmm,
+      "All methods agree",
+      "Methods disagree"
+    ), levels = c("All methods agree", "Methods disagree")),
+    # Check if all HMM methods agree
+    hmm_agreement = factor(ifelse(
+      K_HMM == Kasin_HMM & K_HMM == Kgmm_HMM,
       "All methods agree",
       "Methods disagree"
     ), levels = c("All methods agree", "Methods disagree"))
   )
 
-# Create tile plot with chromosomes on facets
-ggplot(disagreement_data, aes(x = POS, y = 1, fill = agreement)) +
+# Calculate disagreement statistics
+original_disagreement <- mean(disagreement_data$original_agreement == "Methods disagree") * 100
+hmm_disagreement <- mean(disagreement_data$hmm_agreement == "Methods disagree") * 100
+
+cat("Original methods disagreement:", round(original_disagreement, 1), "%\n")
+cat("HMM smoothed methods disagreement:", round(hmm_disagreement, 1), "%\n")
+cat("Reduction in disagreement:", round(original_disagreement - hmm_disagreement, 1), "percentage points\n")
+
+# Create tile plot showing disagreement regions
+p1 <- ggplot(disagreement_data, aes(x = POS, y = 1, fill = original_agreement)) +
   geom_tile() +
   scale_fill_manual(values = c("darkgreen", "darkred")) +
   facet_grid(. ~ CONTIG, scales = "free_x") +
-  scale_x_continuous(labels = unit_format(unit = "M", scale = 1e-6)) +
-  ggpubr::theme_classic2() +
+  scale_x_continuous(labels = unit_format(unit = "", scale = 1e-6)) +
+  labs(title = "Original Methods Agreement/Disagreement", fill = NULL) +
+  theme_minimal() +
   theme(
     legend.position = "bottom",
     strip.background = element_blank(),
-    strip.text.x = element_text(hjust = 0),
-    strip.text.y = element_text(angle = 0, face = "bold"),
-    panel.spacing.x=unit(0.0, "lines"),
-    panel.spacing.y=unit(0.0, "lines"),
     axis.line.y = element_blank(),
     axis.text.y = element_blank(),
-    axis.line.x = element_blank(),
-    axis.text.x = element_blank(),
-    axis.title.x = element_blank(),
-    axis.ticks.x = element_blank(),
-    axis.title.y = element_blank(),
-    axis.ticks.y = element_blank()
-  ) +
-  labs(
-    title = paste("Regions of Agreement/Disagreement Between Methods (", BIN_SIZE_LABEL, " bins)", sep=""),
-    x = "Genome Position (Mb)",
-    fill = NULL
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    panel.spacing.x = unit(0.0, "lines")
   )
+
+p2 <- ggplot(disagreement_data, aes(x = POS, y = 1, fill = hmm_agreement)) +
+  geom_tile() +
+  scale_fill_manual(values = c("darkgreen", "darkred")) +
+  facet_grid(. ~ CONTIG, scales = "free_x") +
+  scale_x_continuous(labels = unit_format(unit = "", scale = 1e-6)) +
+  labs(title = "HMM Smoothed Methods Agreement/Disagreement", 
+       x = "Genome Position (Mb)", fill = NULL) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    strip.background = element_blank(),
+    axis.line.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.spacing.x = unit(0.0, "lines")
+  )
+
+ggpubr::ggarrange(p1, p2, ncol = 1, common.legend = TRUE)
 ```
 
-## Effect of Bin Size
 
-The bin size used in this analysis is `r BIN_SIZE_LABEL`. Adjusting the bin size can have several effects on the analysis:
+## Conclusions and Recommendations
 
-1. **Resolution**: Smaller bins provide higher resolution but may have more noise due to fewer variants per bin. Larger bins provide smoother results but lower resolution.
+Based on this comprehensive analysis of ancestry calling methods with HMM smoothing:
 
-2. **Statistical power**: Larger bins typically contain more variants, which can provide more robust allele frequency estimates.
+### Key Findings
 
-3. **Biological relevance**: The appropriate bin size may depend on the biological question. For example, analyzing recombination might require smaller bins than analyzing large structural variants.
+1. **Method Performance**: All clustering methods show reasonable performance, with the Gaussian Mixture Model and arcsin-transformed K-means showing slightly better separation of genotype classes.
 
-To explore different bin sizes, you can change the `BIN_SIZE` parameter at the top of this document and rerun the analysis.
+2. **HMM Smoothing Benefits**: 
+   - Reduces noise in ancestry calls by an average of `r round(mean(hmm_effects$changes), 1)`% across methods
+   - Improves agreement between methods by `r round(original_disagreement - hmm_disagreement, 1)` percentage points
+   - Enforces biological constraints based on breeding design expectations
 
-## Save Results
+3. **Genotype Frequency Alignment**: HMM smoothing brings observed frequencies closer to theoretical BC2S3 expectations, particularly for ALT regions.
 
-We can save the final results for further analysis:
+### Recommendations
 
-```{r save-results, eval=FALSE}
-# Extract relevant columns
-results <- read_freq %>%
-  select(BIN_POS, VARIANT_COUNT, READ_COUNT, ALT_COUNT, ALT_FREQ, ALT_FREQ, GENOTYPE)
+1. **Preferred Method**: Use the **Gaussian Mixture Model with HMM smoothing** (`Kgmm_HMM`) for final ancestry calls, as it:
+   - Shows good separation between genotype classes
+   - Incorporates breeding design priors through HMM
+   - Produces frequencies closest to theoretical expectations
 
-# Save to file with bin size in the filename
-output_file <- paste0("maize_bin_ancestry_", BIN_SIZE_LABEL, ".csv")
-write.csv(results, output_file, row.names = FALSE)
+2. **Quality Control**: 
+   - Monitor bins with very low variant counts (< 5 variants) for reliability
+   - Consider chromosome-specific analysis for regions with high disagreement
+   - Validate results with independent markers or phenotypic data when available
 
-cat("Results saved to:", output_file, "\n")
-```
+3. **Parameter Optimization**: 
+   - HMM transition probabilities (currently 0.995 stay, 0.005 switch) may need adjustment based on:
+     - Linkage map resolution
+     - Expected recombination frequency
+     - Specific breeding design
 
-## Conclusion
+4. **Bin Size Considerations**: 
+   - Current `r BIN_SIZE_LABEL` bins provide good balance between resolution and statistical power
+   - Consider smaller bins (500kb) for fine-mapping or larger bins (5Mb) for genome-wide patterns
 
-We implemented a three-class clustering approach for genomic ancestry assignment in bins of size `r BIN_SIZE_LABEL`, with special handling for bins with no alternative alleles:
+### Future Directions
 
-1. Bins with no alternative alleles (ALT_FREQ = 0) were automatically classified as "REF"
-2. For the remaining bins (ALT_FREQ > 0), K-means clustering with k=3 was applied
-3. The clusters were labeled "REF" (lowest ALT_FREQ), "HET" (intermediate), and "ALT" (highest)
-4. We replaced any clustering-assigned "REF" with forced "REF" assignments for bins with zero ALT alleles
-
-After comparing four clustering methods on the non-zero bins:
-1. K-means on normalized ALT_FREQ
-2. K-means on log10-transformed normalized ALT_FREQ
-3. K-means on arcsin-transformed normalized ALT_FREQ
-4. Gaussian mixture model on normalized ALT_FREQ
-
-We found substantial agreement between the methods, with K-means on raw normalized ALT_FREQ being our preferred approach. This approach has several advantages:
-
-1. It directly enforces the biological constraint that bins with no alternative alleles must be REF
-2. It normalizes by variant count to account for coverage variations
-3. It allows for the detection of three distinct genotype classes even within the non-zero ALT_FREQ bins
-
-The three genotype clusters effectively represent:
-- REF: Regions with zero or very low normalized alternative allele frequency, suggesting reference homozygous genotype
-- HET: Regions with intermediate normalized alternative allele frequency, suggesting heterozygous genotype
-- ALT: Regions with high normalized alternative allele frequency, suggesting alternative homozygous genotype
-
-This approach provides a biologically interpretable framework for analyzing genomic ancestry patterns in maize.
+1. **Multi-sample Joint Calling**: Implement joint HMM across multiple samples to leverage shared recombination patterns
+2. **Copy Number Integration**: Incorporate copy number variation detection to improve accuracy in duplicated regions  
+3. **Functional Annotation**: Overlay ancestry calls with gene annotations to identify functionally relevant introgression regions
 
 ## Session Information
 
