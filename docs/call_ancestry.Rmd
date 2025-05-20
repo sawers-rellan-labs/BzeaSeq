@@ -9,6 +9,15 @@ output:
     theme: flatly
     highlight: tango
     code_folding: show
+header-includes: 
+ - \usepackage{tikz}
+ - \usepackage{pgfplots}
+ - \usepackage{tikz}
+ - \usetikzlibrary{arrows}
+ - \usetikzlibrary{arrows.meta}
+ - \usetikzlibrary{positioning}
+ - \usetikzlibrary{calc}
+ - \usetikzlibrary{shapes}
 ---
 
 ```{r setup, include=FALSE}
@@ -32,8 +41,7 @@ This document outlines a genomic ancestry analysis pipeline for maize introgress
 2. **Clustering**: For the remaining bins (ALT_FREQ > 0), multiple clustering methods are applied with k=3
 3. **Method Comparison**: Four different clustering approaches are compared:
    - K-means with weighted ALT_FREQ
-   - K-means with arcsin transformation
-   - K-means with log10 transformation  
+   - K-means with arcsin sqrt transformation
    - Gaussian mixture model
 4. **HMM Smoothing**: Hidden Markov Model smoothing is applied to reduce noise and enforce biological constraints
 5. **Validation**: Methods are compared for consistency and biological plausibility
@@ -276,7 +284,7 @@ ggpubr::ggarrange(p1, p2, p3, ncol = 1, common.legend = TRUE)
 
 ## HMM Smoothing Implementation
 
-### Theoretical Background
+### Mendelian Expecteations for Breeding Scheme
 
 For maize introgression lines produced through backcrossing followed by selfing (e.g., BC2S3), we can calculate expected genotype frequencies based on Mendelian genetics:
 
@@ -322,12 +330,18 @@ create_mating_matrices <- function() {
 }
 
 # Function to calculate genotype frequencies after breeding scheme
-calculate_nil_frequencies <- function(bc=2, s=3, donor_type = "aa", from = c(0,1,0) ) {
+calculate_nil_frequencies <- function(
+    bc=2, s=3, 
+    donor  = "aa",                      # the recurrent parent is AA
+    crossing_pop = c(AA=0, Aa=1,aa=0),  # By default the F1 progeny of AA x aa
+                                        # 100 % hetereozygous Aa
+    debug_nil = FALSE 
+    ) {
   # Input validation
   if (bc  < 0 || s < 0) {
     stop("Number of backcrosses and self generations must be non-negative")
   }
-  if (!donor_type %in% c("AA", "aa")) {
+  if (!donor %in% c("AA", "aa")) {
     stop("Donor type must be 'AA' or 'aa'")
   }
   
@@ -336,12 +350,12 @@ calculate_nil_frequencies <- function(bc=2, s=3, donor_type = "aa", from = c(0,1
   
   # Initial F1 generation - all heterozygous after crossing pure lines
   # Population vector: [AA frequency, Aa frequency, aa frequency]
-  current_population <- matrix(from, ncol = 1)
+  current_population <- matrix(crossing_pop, ncol = 1)
   
   # Apply backcrosses sequentially
   if (bc > 0) {
     # Select appropriate backcross matrix based on donor type
-    backcross_matrix <- if (donor_type == "aa") {
+    backcross_matrix <- if (donor == "aa") {
       matrices$backcross_AA
     } else {
       matrices$backcross_aa
@@ -353,7 +367,8 @@ calculate_nil_frequencies <- function(bc=2, s=3, donor_type = "aa", from = c(0,1
       current_population <- backcross_matrix %*% current_population
       
       # Optional: print intermediate results for debugging
-      if (exists("debug_nil") && debug_nil) {
+      if (debug_nil) {
+        cat("Genotype frequencies : [AA, Aa, aa]\n") 
         cat("After backcross", i, ": [", 
             round(current_population[1,1], 4), ", ",
             round(current_population[2,1], 4), ", ", 
@@ -370,7 +385,7 @@ calculate_nil_frequencies <- function(bc=2, s=3, donor_type = "aa", from = c(0,1
       current_population <- matrices$selfing %*% current_population
       
       # Optional: print intermediate results for debugging
-      if (exists("debug_nil") && debug_nil) {
+      if (!is.null(debug_nil) & debug_nil) {
         cat("After self", i, ": [", 
             round(current_population[1,1], 4), ", ",
             round(current_population[2,1], 4), ", ", 
@@ -387,13 +402,19 @@ calculate_nil_frequencies <- function(bc=2, s=3, donor_type = "aa", from = c(0,1
 }
 
 # Function to return frequencies in HMM format (REF, HET, ALT)
-nil_frequencies_for_hmm <- function(bc, s, donor_type = "aa", from = c(0,1,0)) {
+nil_frequencies_for_hmm <- function(
+    bc=2, s=3, 
+    donor = "aa",        # the recurrent parent is AA
+    crossing_pop = c(AA=0,Aa=1,aa=0),  # By default the F1 progeny of AA x aa, 
+                                      # 100 % hetereozygous Aa
+    ...
+    ) {
   # Calculate raw genotype frequencies
-  genotype_freqs <- calculate_nil_frequencies(bc, s, donor_type, from)
+  genotype_freqs <- calculate_nil_frequencies(bc, s, donor, crossing_pop,...)
   
   # Convert to HMM format based on which allele is being introgressed
-  if (donor_type == "AA") {
-    # AA is the introgressed (donor) allele
+  if (donor == "AA") {
+    # A is the introgressed (donor) allele
     # aa represents the recurrent parent background (REF)
     # AA represents regions with donor allele (ALT)
     hmm_frequencies <- c(
@@ -402,7 +423,7 @@ nil_frequencies_for_hmm <- function(bc, s, donor_type = "aa", from = c(0,1,0)) {
       ALT = genotype_freqs["AA"]   # Donor introgression
     )
   } else {
-    # aa is the introgressed (donor) allele
+    # a is the introgressed (donor) allele
     # AA represents the recurrent parent background (REF)
     # aa represents regions with donor allele (ALT)
     hmm_frequencies <- c(
@@ -415,19 +436,85 @@ nil_frequencies_for_hmm <- function(bc, s, donor_type = "aa", from = c(0,1,0)) {
   return(hmm_frequencies)
 }
 
-bc2s3 <- nil_frequencies_for_hmm(bc=2,s=3, donor_type = "aa")
+bc2s3 <- nil_frequencies_for_hmm(bc=2, s=3, donor = "aa", debug_nil= TRUE)
 
 cat("Expected genotype frequencies for BC2S3:\n")
-print(bc2s3)
+print(round(bc2s3,2))
 ```
 
 ### HMM Smoothing Function
+```{tikz hmm-diagram, fig.ext = 'png',echo = FALSE}
+\begin{tikzpicture}[
+   % Define styles
+   hidden/.style={circle, draw=blue!70, fill=blue!20, minimum size=1.4cm, font=\large},
+   obs/.style={rectangle, draw=orange!70, fill=orange!20, minimum size=1.2cm, font=\small},
+   transition/.style={->, >=stealth, thick, blue!70},
+   emission/.style={->, >=stealth, thick, orange!70},
+   self/.style={->, >=stealth, thick, blue!70, loop above, looseness=5},
+   prob/.style={font=\scriptsize, black},
+   label/.style={font=\small\bfseries}
+]
+
+% Time labels
+\node[label] at (0, 4.5) {Bin $t-1$};
+\node[label] at (4, 4.5) {Bin $t$};
+\node[label] at (8, 4.5) {Bin $t+1$};
+
+% Hidden states
+\node[hidden] (s1) at (0, 2.5) {$S_{t-1}$};
+\node[hidden] (s2) at (4, 2.5) {$S_t$};
+\node[hidden] (s3) at (8, 2.5) {$S_{t+1}$};
+
+% Observations
+\node[obs] (o1) at (0, 0.5) {$O_{t-1}$};
+\node[obs] (o2) at (4, 0.5) {$O_t$};
+\node[obs] (o3) at (8, 0.5) {$O_{t+1}$};
+
+% Transitions between hidden states
+\draw[transition] (s1) -- node[prob, above] {$P(S_t|S_{t-1})$} (s2);
+\draw[transition] (s2) -- node[prob, above] {$P(S_{t+1}|S_t)$} (s3);
+
+% Self-transitions
+\draw[self] (s1) to node[prob, above=0.3cm] {$0.99$} (s1);
+\draw[self] (s2) to node[prob, above=0.3cm] {$0.99$} (s2);
+\draw[self] (s3) to node[prob, above=0.3cm] {$0.99$} (s3);
+
+% Emissions
+\draw[emission] (s1) -- node[prob, right] {$P(O_{t-1}|S_{t-1})$} (o1);
+\draw[emission] (s2) -- node[prob, right] {$P(O_t|S_t)$} (o2);
+\draw[emission] (s3) -- node[prob, right] {$P(O_{t+1}|S_{t+1})$} (o3);
+
+% Initial state probabilities
+\node at (-2, 2.5) {\textbf{Initial:}};
+\draw[transition] (-1.5, 2.5) -- node[prob, above] {$\pi_i$} (s1);
+
+% Legend box
+\node[draw, rectangle, align=left, font=\tiny] at (11, 4) {
+   \textbf{Hidden States ($S_t$):} \\
+   REF: Recurrent parent ($\pi = 0.86$) \\
+   HET: Heterozygous ($\pi = 0.03$) \\
+   ALT: Donor introgression ($\pi = 0.11$) \\[0.3cm]
+   \textbf{Observations ($O_t$):} \\
+   0: REF clustering call \\
+   1: HET clustering call \\
+   2: ALT clustering call \\[0.3cm]
+   \textbf{Key Properties:} \\
+   - High self-transitions (0.99) \\
+   - Genomic continuity preserved \\
+   - Observation uncertainty modeled
+};
+
+% Title
+\node[label] at (4, 6) {\Large HMM for Maize Ancestry Analysis};
+\end{tikzpicture}
+```
+
 
 ```{r hmm-smoothing-function}
 # Function to apply HMM smoothing to ancestry calls
 smooth_ancestry_with_hmm <- function(
     genotypes, 
-    transitions = c(0.99, 0.01) # 1Mb=1cM, you could add genetic map to this.
+    transitions = c(0.99, 0.01) # 1Mb ~ 1cM, you could add genetic map to this.
     ) {
   # Convert genotypes to numeric (0=REF, 1=HET, 2=ALT)
   geno_numeric <- as.numeric(factor(genotypes, levels=c("REF", "HET", "ALT"))) - 1
@@ -469,9 +556,9 @@ smooth_ancestry_with_hmm <- function(
 read_freq <- read_freq %>%
   group_by(CONTIG) %>%
   mutate(
-    K_HMM = smooth_ancestry_with_hmm(K, transitions=c(0.95, 0.05)),
-    Kasin_HMM = smooth_ancestry_with_hmm(Kasin, transitions=c(0.95, 0.05)),
-    Kgmm_HMM = smooth_ancestry_with_hmm(Kgmm, transitions=c(0.95, 0.05))
+    K_HMM = smooth_ancestry_with_hmm(K, transitions=c(0.995, 0.005)),
+    Kasin_HMM = smooth_ancestry_with_hmm(Kasin, transitions=c(0.995, 0.005)),
+    Kgmm_HMM = smooth_ancestry_with_hmm(Kgmm, transitions=c(0.995, 0.005))
   ) %>%
   ungroup()
 
@@ -531,9 +618,9 @@ read_freq %>%
     POS = BIN_POS * BIN_SIZE,
     method = factor(method, 
                    levels = c("K", "K_HMM", "Kasin", "Kasin_HMM", "Kgmm", "Kgmm_HMM"),
-                   labels = c("K-means (weighted)", "K-means (weighted)\nHMM",
+                   labels = c("K-means", "K-means\nHMM",
                               "K-means (arcsin)", "K-means (arcsin)\nHMM",
-                              "Gaussian Mixture", "Gaussian Mixture]\nHMM"))
+                              "Gaussian Mixture", "Gaussian Mixture\nHMM"))
   ) %>%
   ggplot(aes(x = POS, y = 1, fill = genotype)) +
   geom_tile() +
@@ -584,8 +671,8 @@ genotype_freq <- read_freq %>%
     method_type = ifelse(grepl("_HMM", method), "HMM Smoothed", "Original"),
     method_base = gsub("_HMM", "", method),
     method = case_when(
-      method == "K" ~ "K-means (weighted)",
-      method == "K_HMM" ~ "K-means (weighted) HMM",
+      method == "K" ~ "K-means",
+      method == "K_HMM" ~ "K-means HMM",
       method == "Kasin" ~ "K-means (arcsin)",
       method == "Kasin_HMM" ~ "K-means (arcsin) HMM",
       method == "Kgmm" ~ "Gaussian Mixture",
@@ -693,58 +780,17 @@ hmm_effects <- data.frame(
   )
 )
 
-# Calculate direction of changes (transitions between states)
-transition_summary <- data.frame()
-
-for (method in c("K", "Kasin", "Kgmm")) {
-  hmm_method <- paste0(method, "_HMM")
-  
-  transitions <- table(read_freq[[method]], read_freq[[hmm_method]])
-  
-  # Calculate off-diagonal (changed) proportions
-  total_changes <- sum(transitions) - sum(diag(transitions))
-  
-  for (i in rownames(transitions)) {
-    for (j in colnames(transitions)) {
-      if (i != j && transitions[i, j] > 0) {
-        transition_summary <- rbind(transition_summary, data.frame(
-          method = method,
-          from = i,
-          to = j,
-          count = transitions[i, j],
-          percentage = transitions[i, j] / nrow(read_freq) * 100
-        ))
-      }
-    }
-  }
-}
-
 # Display HMM effects
 cat("Percentage of bins changed by HMM smoothing:\n")
 hmm_effects %>%
   mutate(method = case_when(
-    method == "K" ~ "K-means (weighted)",
+    method == "K" ~ "K-means",
     method == "Kasin" ~ "K-means (arcsin)",
     method == "Kgmm" ~ "Gaussian Mixture",
     TRUE ~ method
   )) %>%
   knitr::kable(col.names = c("Method", "% Bins Changed"), digits = 2)
-
-# Display transition summary
-cat("\nDetailed transition patterns:\n")
-transition_summary %>%
-  mutate(
-    transition = paste(from, "=>", to),
-    method = case_when(
-      method == "K" ~ "K-means (weighted)",
-      method == "Kasin" ~ "K-means (arcsin)",
-      method == "Kgmm" ~ "Gaussian Mixture",
-      TRUE ~ method
-    )
-  ) %>%
-  select(method, transition, count, percentage) %>%
-  knitr::kable(digits = 2)
-
+  
 # Visualize HMM effects
 ggplot(hmm_effects, aes(x = reorder(method, changes), y = changes)) +
   geom_col(fill = "steelblue", alpha = 0.7) +
@@ -758,6 +804,7 @@ ggplot(hmm_effects, aes(x = reorder(method, changes), y = changes)) +
   theme_minimal() +
   coord_flip()
 ```
+
 
 ## Method Disagreement Analysis
 
@@ -825,6 +872,199 @@ p2 <- ggplot(disagreement_data, aes(x = POS, y = 1, fill = hmm_agreement)) +
   )
 
 ggpubr::ggarrange(p1, p2, ncol = 1, common.legend = TRUE)
+```
+
+
+
+```{r transition_analysis}
+# Calculate actual state transitions from the HMM smoothed results
+transition_summary <- data.frame()
+
+for (method in c("K_HMM", "Kasin_HMM", "Kgmm_HMM")) {
+  # Process each chromosome separately
+  for (chr in paste0("chr",1:10)) {
+    # Get states for this chromosome
+    chr_states <- read_freq %>% 
+      filter(CONTIG == chr) %>% 
+      arrange(BIN_POS) %>% 
+      pull(!!method)
+    
+    # Skip empty chromosomes
+    if (length(chr_states) == 0) next
+    
+    # Use run-length encoding to find segments
+    rle_result <- rle(as.character(chr_states))
+    
+    # Get the values (states) and lengths
+    states <- rle_result$values
+    lengths <- rle_result$lengths
+    
+    # Count transitions between states (excluding self-transitions)
+    if (length(states) > 1) {
+      for (i in 1:(length(states)-1)) {
+        from_state <- states[i]
+        to_state <- states[i+1]
+        segment_length <- lengths[i]
+        
+        # Record this transition
+        transition_summary <- rbind(transition_summary, data.frame(
+          method = method,
+          chromosome = chr,
+          from = from_state,
+          to = to_state,
+          segment_length = segment_length,
+          bins = sum(lengths) # total bins in chromosome
+        ))
+      }
+    }
+  }
+}
+
+# Calculate summary statistics on transitions
+if (nrow(transition_summary) > 0) {
+  transition_stats <- transition_summary %>%
+    group_by(method, from, to) %>%
+    summarize(
+      count = n(),
+      avg_segment_length = mean(segment_length),
+      total_transitions = sum(count),
+      .groups = "drop"
+    ) %>%
+    # Calculate transition rates 
+    mutate(
+      transition_rate = count / nrow(read_freq) ,
+      method = case_when(
+        method == "K_HMM" ~ "K-means HMM",
+        method == "Kasin_HMM" ~ "K-means (arcsin) HMM",
+        method == "Kgmm_HMM" ~ "Gaussian Mixture HMM",
+        TRUE ~ method
+      )
+    )
+  
+  # Display transition statistics
+  cat("Ancestry state transition rate:\n")
+  transition_stats %>%
+    select(method, from, to, count, transition_rate) %>%
+    arrange(method, from, to) %>%
+    knitr::kable(digits = 2)
+  
+  # Visualize transitions
+  ggplot(transition_stats, aes(x = paste(from, "→", to), y = transition_rate, fill = method)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(
+      title = "Ancestry State Transition rate per 1Mb bin",
+      x = "Transition Type",
+      y = "Transition Rate",
+      fill = "Method"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+} else {
+  cat("No transitions found in the data.\n")
+}
+
+# Calculate segment length distribution
+segment_summary <- data.frame()
+
+for (method in c("K_HMM","Kasin_HMM", "Kgmm_HMM")) {
+  # Process each chromosome separately
+  for (chr in unique(read_freq$CONTIG)) {
+    # Get states for this chromosome
+    chr_states <- read_freq %>% 
+      filter(CONTIG == chr) %>% 
+      arrange(BIN_POS) %>% 
+      pull(!!method)
+    
+    # Skip empty chromosomes
+    if (length(chr_states) == 0) next
+    
+    # Use run-length encoding to find segments
+    rle_result <- rle(as.character(chr_states))
+    
+    # Get the values (states) and lengths
+    states <- rle_result$values
+    lengths <- rle_result$lengths
+    
+    # Record all segments
+    for (i in 1:length(states)) {
+      segment_summary <- rbind(segment_summary, data.frame(
+        method = method,
+        chromosome = chr,
+        state = states[i],
+        length_bins = lengths[i],
+        length_mb = lengths[i] * (BIN_SIZE / 1e6) # Convert bin count to Mb
+      ))
+    }
+  }
+}
+
+# Analyze segment lengths
+if (nrow(segment_summary) > 0) {
+  segment_stats <- segment_summary %>%
+    group_by(method, state) %>%
+    summarize(
+      count = n(),
+      mean_length_mb = mean(length_mb),
+      median_length_mb = median(length_mb),
+      min_length_mb = min(length_mb),
+      max_length_mb = max(length_mb),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      method = case_when(
+        method == "K_HMM" ~ "K-means HMM",
+        method == "Kasin_HMM" ~ "K-means (arcsin) HMM",
+        method == "Kgmm_HMM" ~ "Gaussian Mixture HMM",
+        TRUE ~ method
+      )
+    )
+  
+  # Display segment statistics
+  cat("\nAncestry segment length statistics (in Mb):\n")
+  segment_stats %>%
+    select(method, state, count, mean_length_mb, median_length_mb, max_length_mb) %>%
+    arrange(method, state) %>%
+    knitr::kable(digits = 2)
+  
+  # Visualize segment length distribution for donor introgression segments (ALT)
+  alt_segments <- segment_summary %>%
+    filter(state == "ALT") %>%
+    mutate(
+      method = case_when(
+        method == "K_HMM" ~ "K-means HMM",
+        method == "Kasin_HMM" ~ "K-means (arcsin) HMM",
+        method == "Kgmm_HMM" ~ "Gaussian Mixture HMM",
+        TRUE ~ method
+      )
+    )
+  
+  if (nrow(alt_segments) > 0) {
+    ggplot(alt_segments, aes(x = length_mb, fill = method)) +
+      geom_histogram(binwidth = 1, position = "dodge") +
+      labs(
+        title = "Distribution of Donor Introgression Segment Lengths",
+        x = "Segment Length (Mb)",
+        y = "Count",
+        fill = "Method"
+      ) +
+      theme_minimal() +
+      xlim(0, min(50, max(alt_segments$length_mb) + 5)) +
+      facet_wrap(~method, scales = "free_y")
+  }
+}
+
+# Display transition summary
+cat("\nDetailed transition patterns:\n")
+transition_summary %>%
+  mutate(
+    transition = paste(from, "=>", to),
+    method = case_when(
+      method == "K" ~ "K-means",
+      method == "Kasin" ~ "K-means (arcsin)",
+      method == "Kgmm" ~ "Gaussian Mixture",
+      TRUE ~ method
+    )
+  ) %>% select(method,transition) %>% table()
 ```
 
 
