@@ -51,8 +51,8 @@ dependencies:
   - conda-forge::r-data.table=1.17.0
   - conda-forge::r-ggplot2=3.5.2
   - conda-forge::r-gridextra=2.3
-  - conda-forge::r-vcfr=1.15.0
-  - conda-forge::Ckmeans.1d.dp=4.3.5
+  - conda-forge::r-vcfr=1.15.0 
+  - conda-forge::r-ckmeans.1d.dp=4.3.5
   - bioconda::bioconductor-genomicranges=1.58.0
   - bioconda::bioconductor-snprelate=1.40.0
 

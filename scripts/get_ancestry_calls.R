@@ -3,11 +3,12 @@
 # Script to process GATK AlleleCountsOutput and generate binned ancestry calls
 # Usage: Rscript get_ancestry_calls.R input.allelicCounts.tsv sample_name [bin_size]
 # Example: Rscript get_ancestry_calls.R sample1.allelicCounts.tsv sample1 1000000
-
+ 
 # Load required libraries
 suppressPackageStartupMessages({
-  library(dplyr)
   library(data.table)
+  library(dplyr)
+  library(ggplot2)
   library(Ckmeans.1d.dp)
   library(rebmix)  # For Gaussian mixture modeling
   library(HMM)     # For HMM smoothing

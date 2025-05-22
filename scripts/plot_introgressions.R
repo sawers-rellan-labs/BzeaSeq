@@ -6,36 +6,42 @@ library(cowplot)
 
 # Read in data from file
 # Replace this with your file path
-data <- read.table("~/Desktop/all_samples_bzea_ALT.bed", sep = "\t", na.strings = na.strings = c("NA",""))
+# data <- read.table("~/Desktop/all_samples_bzea_ALT.bed", sep = "\t", na.strings = na.strings = c("NA",""))
+data <- read.table("/Volumes/BZea/bzeaseq/ancestry/all_samples_ancestry_segments.bed",
+                   sep = "\t", na.strings = c("NA",""))
 colnames(data) <- c("sample", "chrom", "start", "end", "genotype", "numeric", "freq")
 
-bzea <- read.csv("~/Desktop/J2Teo_Final_DB.csv", na.strings = c("NA",""))
-colnames(bzea)
-head(bzea)
+# bzea <- read.csv("~/Desktop/J2Teo_Final_DB.csv", na.strings = c("NA",""))
+# colnames(bzea)
+# head(bzea)
 
-sample_sheet <- read.csv("~/Desktop/BZea-Sample-List.csv", na.strings = c("NA",""))
-colnames(sample_sheet)
-head(sample_sheet)
-
-sum(sample_sheet$Seq_Full_ID %in% bzea$sequencing.id)
-sum(bzea$line_id=="B73-Bulk")
-bzea$line_id[grepl("B73",bzea$line_id)]
-B73-bulk
-
-metadata <- sample_sheet %>% select(
-  field_row = Sample_Origin,
-  bam_preffix = Seq_Full_ID,
-  pedigree_sample_sheet = Line.ID) %>%
-    left_join(bzea %>% select(field_row =  seed_origin,
-    bam_preffix = sequencing.id,
-                             founder_group =taxa_code,
-                             donor_id = accession_id,
-                             pedigree_J2TEO = line_id
-                             )
-             ) %>% filter(!is.na(founder_group))
+# sample_sheet <- read.csv("~/Desktop/BZea-Sample-List.csv", na.strings = c("NA","")) %>%
+#   filter(!grepl("LANTEO|LANDB",Line.ID,perl=TRUE)) %>%
+#   filter(grepl("B73|Purple",Line.ID,perl=TRUE))
+# colnames(sample_sheet)
+# sample_sheet[sample_sheet$Seq_Full_ID=="PN17_SID1632",]
+# head(sample_sheet)
+# sample_sheet
+# sum(sample_sheet$Seq_Full_ID %in% bzea$sequencing.id)
+# sum(sample_sheet$Line.ID=="B73-Bulk")
+# sample_sheet[grepl("B73",sample_sheet$Line.ID),]
 
 
-metadata
+# metadata <- sample_sheet %>% select(
+#   field_row = Sample_Origin,
+#   bam_preffix = Seq_Full_ID,
+#   pedigree_sample_sheet = Line.ID) %>%
+#     left_join(bzea %>% select(field_row =  seed_origin,
+#     bam_preffix = sequencing.id,
+#                              founder_group =taxa_code,
+#                              donor_id = accession_id,
+#                              pedigree_J2TEO = line_id
+#                              )
+#              ) %>% filter(!is.na(founder_group))
+# 
+# 
+# metadata
+
 # Clean up sample names if needed
 # data$sample <- gsub("./ancestry/", "", data$sample, fixed = TRUE)
 
@@ -44,19 +50,35 @@ process_introgression_data <- function(data) {
   # Calculate segment span
   data$span <- data$end - data$start
   
-  # Sort by chromosome, then descending span size, then start position
-  # This ensures the largest segment in each chromosome gets ID=1
-  data <- data %>%     
-    arrange(sample,chrom, desc(span), start) %>%
-    group_by(sample,chrom) %>%
-    mutate(segment_id = row_number()) %>%     
-  # Get first (largest) segment info for each sample and chromosome
-    mutate(
+  # Process each genotype appropriately
+  result <- data %>%
+    # First assign segment IDs for all segments
+    arrange(sample, chrom, desc(span), start) %>%
+    group_by(sample, chrom) %>%
+    mutate(segment_id = row_number()) %>%
+    ungroup()
+  
+  # Get largest non-REF segment info separately
+  largest_segments <- data %>%
+    filter(genotype %in% c("ALT", "HET")) %>%
+    arrange(sample, chrom, desc(span), start) %>%
+    group_by(sample, chrom) %>%
+    summarize(
       largest_segment_start = first(start),
-      largest_span = first(span)
-    ) %>%
-     ungroup()
-  return(data)
+      largest_span = first(span),
+      .groups = "drop"
+    )
+  
+  # Join the largest segment info back to original data
+  result <- result %>%
+    left_join(largest_segments, by = c("sample", "chrom")) %>%
+    # Ensure REF segments have these fields as NA
+    mutate(
+      largest_segment_start = if_else(genotype == "REF", NA_real_, largest_segment_start),
+      largest_span = if_else(genotype == "REF", NA_real_, largest_span)
+    )
+  
+  return(result)
 }
 
 
@@ -144,7 +166,7 @@ prepare_stacked_data <- function(data, chrom_to_plot) {
         chrom = chrom_to_plot,
         start = sample_segments$start[i],
         end = sample_segments$end[i],
-        genotype = "ALT",  # We're only plotting ALT segments
+        genotype = sample_segments$genotype[i],  
         segment_id = sample_segments$segment_id[i],
         span = sample_segments$span[i],
         is_gap = FALSE,
@@ -239,11 +261,11 @@ chr_theme <- theme(
   axis.ticks.y = element_blank(),
   axis.line.x = element_blank(),
   axis.title.x = element_blank(),
-  axis.text.y = element_blank()
+  # axis.text.y = element_blank()
 ) 
 
 # Plot introgression segments using geom_bar for a stacked visualization
-plot_introgression_stacked <- function(data, chrom_lengths) {
+plot_introgression_stacked <- function(data, chrom_lengths, order = "sample") {
   # Get all unique chromosomes
   chromosomes <- paste0("chr",1:10)
   
@@ -251,7 +273,7 @@ plot_introgression_stacked <- function(data, chrom_lengths) {
   chromosome_plots <- list()
   
   # Create a color palette for genotypes
-  genotype_colors <- c("REF" = "gold", "ALT" = "purple4")
+  genotype_colors <- c("REF" = "gold", "HET" = "springgreen4", "ALT" = "purple4")
   
   # Process each chromosome
   for(chrom in chromosomes) {
@@ -266,14 +288,21 @@ plot_introgression_stacked <- function(data, chrom_lengths) {
       next
     }
     
+    # Sort samples by sample name
+    if(order == "sample"){
+      sample_order <- levels(factor(stacked_data$sample)) %>% rev()
+    }
+    
     # Sort samples by largest segment start position
     # Full REF chromosomes will be at the end due to their large largest_start value
+    if(order == "position"){
     sample_order <- stacked_data %>%
       select(sample, largest_start) %>%
       distinct() %>%
       arrange(largest_start) %>%
       pull(sample)
-    
+    }
+
     # Set sample as a factor with the determined order
     stacked_data$sample <- factor(stacked_data$sample, levels = sample_order)
     
@@ -298,9 +327,31 @@ plot_introgression_stacked <- function(data, chrom_lengths) {
 }
 
 
-
 # Process the data
-processed_data <- process_introgression_data(data)
+processed_data <- process_introgression_data(
+  data %>% filter(!sample %in% sequenced)
+)
+# processed_data <- process_introgression_data(
+#   data %>% filter(sample %in% sequenced)
+# )
+# 
+# is_sequenced<- levels(factor(data$sample)) %in% sample_sheet$Seq_Full_ID
+# 
+# sequenced_samples <- levels(factor(data$sample))[is_sequenced]
+# 
+# 
+# sample_sheet[sample_sheet$Seq_Full_ID %in%sequenced_samples,c("Line.ID","Seq_Full_ID")] %>%
+#   mutate(label= (paste(Line.ID,Seq_Full_ID, sep ="_"))) %>%
+#   arrange(label %>% desc())
+# 
+# processed_data <- process_introgression_data(
+#   data %>% filter(sample %in% sample_sheet$Seq_Full_ID )
+# ) %>%
+#   inner_join(
+#     sample_sheet %>% select(sample= Seq_Full_ID,pedigree= Line.ID)
+#   ) %>%
+#   mutate(label = sample, sample= paste(pedigree,sample, sep= "_")
+#   )
 
 # Generate chromosome lengths
 chrom_lengths <- generate_chromosome_lengths()
@@ -322,6 +373,7 @@ pdf("~/Desktop/all_chromosome_introgressions.pdf", width = 10, height = 12)
 for(chrom in paste0("chr",1:10)) {
   print(chromosome_plots[[chrom]])
 }
+
 dev.off()
 
 chr_theme2 <- theme(
@@ -343,6 +395,7 @@ all_chromosomes_plot <- ggpubr::ggarrange(
       coord_flip(expand = FALSE) +
       ggpubr::theme_classic2() + labs(title = NULL) + chr_theme2
   }), 
+    
 common.legend = TRUE, legend ="bottom", nrow=5,ncol=2)
 
 # Save all chromosomes plot
