@@ -65,7 +65,7 @@ library(tibble)       # Modern data frames
 
 ```{r create-bins}
 # Read the binned allelic counts
-read_freq <- read.table("~/Desktop/PN17_SID1632_bin_genotypes.tsv", header=TRUE)
+read_freq <- read.table("/Volumes/BZea/bzeaseq/ancestry/PN15_SID1353_bin_genotypes.tsv", header=TRUE)
 
 # Display first few rows of the binned data
 head(read_freq)
@@ -143,13 +143,13 @@ non_zero_bins$asin <- asin(sqrt(non_zero_bins$ALT_FREQ))
 p1 <- ggplot(non_zero_bins, aes(x = ALT_FREQ)) + 
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   labs(title = paste("Weighted ALT_FREQ distribution (non-zero bins, ", BIN_SIZE_LABEL, ")", sep=""), 
-       x = "ALT_FREQ_WEIGHTED") +
+       x = "ALT_FREQ") +
   theme_minimal()
 
 p2 <- ggplot(non_zero_bins, aes(x = asin)) + 
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
   labs(title = "Arcsin transformation (non-zero bins)",
-       x = "asin(sqrt(ALT_FREQ_WEIGHTED))") +
+       x = "asin(sqrt(ALT_FREQ))") +
   theme_minimal()
 
 
