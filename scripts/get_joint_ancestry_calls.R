@@ -1,12 +1,12 @@
 #!/usr/bin/env Rscript
-# get_genotypes_on_all_samples.R
+# get_joint_ancestry_calls.R
 #
 # Description: Processes bin-level allelic count data from multiple samples,
 # performs clustering across all samples, and applies HMM smoothing.
 # Also analyzes segment lengths and transition frequencies.
 #
-# Usage: Rscript get_genotypes_on_all_samples.R input_file output_prefix [bin_size]
-# Example: Rscript get_genotypes_on_all_samples.R ./ancestry/bzea_bin_genotypes.tsv all_samples 1000000
+# Usage: Rscript get_joint_ancestry_calls.R input_file output_prefix [bin_size]
+# Example: Rscript get_joint_ancestry_calls.R ./ancestry/bzea_bin_genotypes.tsv sample_metatada.csv all_samples 1000000
 
 suppressPackageStartupMessages({
   library(data.table) # big table management
@@ -29,13 +29,24 @@ if (length(args) < 2) {
   quit(status = 1)
 }
 
+
+
 input_file <- args[1]
-output_prefix <- args[2]
-bin_size <- ifelse(length(args) >= 3, as.numeric(args[3]), 1000000)
+metadata_file <- args[2]
+output_prefix <- args[3]
+bin_size <- ifelse(length(args) >= 4, as.numeric(args[4]), 1000000)
+
 
 # Create output directory if needed
 output_dir <- "ancestry"
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Read Metadata
+metadata <- read.csv(metadata_file)
+in_bzea <- !is.na(metadata$project) & metadata$project =="bzea" 
+is_valid_sample <- in_bzea | metadata$is_check == TRUE
+valid_samples <-  metadata$sample[is_valid_sample]
+
 
 # Set up logging
 log_file <- file.path(output_dir, paste0(output_prefix, ".log"))
@@ -59,10 +70,15 @@ cat(paste("Started at:", start_time, "\n"))
 cat("Reading allelic counts data...\n")
 read_freq <- try(read.table(input_file, comment.char = "@", header = TRUE))
 
+
 if (inherits(read_freq, "try-error")) {
   cat("Error reading input file. Please check the file format.\n")
   quit(status = 1)
 }
+
+cat("Filtering valid samples...\n")
+read_freq <- read_freq  %>%
+  filter(SAMPLE %in% valid_samples)
 
 # Ensure CONTIG stays as a factor with proper ordering throughout the analysis
 read_freq$CONTIG <- factor(read_freq$CONTIG, levels = chrom_order)
@@ -313,7 +329,6 @@ genotype_counts <- data.frame(
     NON_REF_pct = NON_REF * 100
   )
 
-genotype_counts[7,] <- c(,)
 cat("Genotype proportions across methods:\n")
 genotype_counts %>%
   select(Method, REF_pct, HET_pct, ALT_pct, NON_REF_pct) %>%
