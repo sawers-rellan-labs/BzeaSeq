@@ -2,6 +2,9 @@
 #'
 #' This module provides comprehensive functions for processing, analyzing, and
 #' visualizing introgression data from maize ancestry analysis pipelines.
+#'
+#' @name introgression-plot-functions
+NULL
 
 library(ggplot2)
 library(dplyr)
@@ -169,6 +172,7 @@ reencode_introgressions <- function(data) {
 #' known chromosome lengths.
 #'
 #' @examples
+#' \dontrun{
 #' segment_data <- data.frame(
 #'   sample = "sample1",
 #'   chrom = "chr1", 
@@ -179,6 +183,7 @@ reencode_introgressions <- function(data) {
 #' 
 #' result <- add_segment_metadata(segment_data, bin_size = 1000000)
 #' print(result)
+#' }
 #'
 #' @export
 add_segment_metadata <- function(data, bin_size = 1000000) {
@@ -239,6 +244,7 @@ add_segment_metadata <- function(data, bin_size = 1000000) {
 #' in a single convenient function call.
 #'
 #' @examples
+#' \dontrun{
 #' raw_data <- data.frame(
 #'   sample = c("sample1", "sample1"),
 #'   chrom = c("chr1", "chr1"),
@@ -249,6 +255,7 @@ add_segment_metadata <- function(data, bin_size = 1000000) {
 #' 
 #' processed <- process_introgression_data(raw_data)
 #' print(processed)
+#' }
 #'
 #' @export
 process_introgression_data <- function(data, bin_size = 1000000) {
@@ -274,9 +281,11 @@ process_introgression_data <- function(data, bin_size = 1000000) {
 #' sequential bin numbers for proper visualization ordering.
 #'
 #' @examples
+#' \dontrun{
 #' # Assume processed_data exists from process_introgression_data()
 #' chr1_data <- prepare_stacked_data(processed_data, "chr1")
 #' print(head(chr1_data))
+#' }
 #'
 #' @export
 prepare_stacked_data <- function(data, chrom_to_plot) {
@@ -312,9 +321,9 @@ prepare_stacked_data <- function(data, chrom_to_plot) {
 #'
 #' @param stacked_data Data frame prepared by `prepare_stacked_data()`
 #' @param order Character or character vector specifying ordering method:
-#'   \itemize{
-#'     \item{"sample"}{Alphabetical order by sample name}
-#'     \item{"position"}{Order by largest introgression midpoint position}
+#'   \describe{
+#'     \item{sample}{Alphabetical order by sample name}
+#'     \item{position}{Order by largest introgression midpoint position}
 #'     \item{Custom vector}{User-specified order of sample names}
 #'   }
 #'
@@ -327,6 +336,7 @@ prepare_stacked_data <- function(data, chrom_to_plot) {
 #' - Custom vector: User provides exact sample order
 #'
 #' @examples
+#' \dontrun{
 #' # Alphabetical ordering
 #' sample_order <- create_sample_order(stacked_data, "sample")
 #' 
@@ -335,6 +345,7 @@ prepare_stacked_data <- function(data, chrom_to_plot) {
 #' 
 #' # Custom ordering
 #' custom_order <- create_sample_order(stacked_data, c("sample3", "sample1", "sample2"))
+#' }
 #'
 #' @export
 create_sample_order <- function(stacked_data, order) {
@@ -460,6 +471,7 @@ create_chromosome_plot <- function(stacked_data, chrom, genotype_colors) {
 #' ordered consistently according to the specified method.
 #'
 #' @examples
+#' \dontrun{
 #' # Create basic stacked plots
 #' plots <- plot_introgression_stacked(processed_data)
 #' 
@@ -468,6 +480,7 @@ create_chromosome_plot <- function(stacked_data, chrom, genotype_colors) {
 #' 
 #' # Display chromosome 1 plot
 #' print(plots[["chr1"]])
+#' }
 #'
 #' @export
 plot_introgression_stacked <- function(data, chrom_lengths = NULL, order = "sample") {
@@ -526,6 +539,7 @@ plot_introgression_stacked <- function(data, chrom_lengths = NULL, order = "samp
 #' overlapping segments. Missing bins are filled with "REF" by default.
 #'
 #' @examples
+#' \dontrun{
 #' # Convert to matrix format
 #' matrix_data <- convert_to_matrix(processed_data, bin_size = 1000000)
 #' 
@@ -534,6 +548,7 @@ plot_introgression_stacked <- function(data, chrom_lengths = NULL, order = "samp
 #' 
 #' # Get bin metadata for annotations
 #' bin_info <- matrix_data$bin_metadata
+#' }
 #'
 #' @export
 convert_to_matrix <- function(processed_data, bin_size = 1000000, 

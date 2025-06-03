@@ -2,6 +2,9 @@
 #'
 #' This module provides functions for extracting connected ancestry segments
 #' from bin-level genotype data across multiple samples and chromosomes.
+#'
+#' @name ancestry-segment-functions
+NULL
 
 library(data.table)
 library(dplyr)

@@ -3,6 +3,9 @@
 #' This module provides functions for calculating expected genotype frequencies
 #' in breeding populations and applying Hidden Markov Model smoothing to
 #' ancestry calls in maize introgression lines.
+#'
+#' @name hmm-functions
+NULL
 
 library(HMM)
 
@@ -211,6 +214,7 @@ nil_frequencies_for_hmm <- function(bc = 2, s = 3, donor_type = "aa",
 #' approximately 1 Mb bins and 1 cM/Mb recombination rate.
 #'
 #' @examples
+#' \dontrun{
 #' # Simulate noisy ancestry calls
 #' noisy_calls <- factor(c("REF", "ALT", "REF", "REF", "HET", "REF"), 
 #'                       levels = c("REF", "HET", "ALT"))
@@ -218,6 +222,7 @@ nil_frequencies_for_hmm <- function(bc = 2, s = 3, donor_type = "aa",
 #' # Apply smoothing
 #' smoothed <- smooth_ancestry_with_hmm(noisy_calls)
 #' print(data.frame(original = noisy_calls, smoothed = smoothed))
+#' }
 #'
 #' @export
 smooth_ancestry_with_hmm <- function(genotypes, transitions = c(0.995, 0.005)) {

@@ -1,0 +1,38 @@
+Package: BzeaSeq
+Type: Package
+Title: Teosinte Introgression Analysis for Maize Genomics
+Version: 0.1.0
+Authors@R: 
+    person("Fausto", "Rodriguez-Zapata", , "frodrig4@ncsu.edu", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-8088-1113"))
+Description: A comprehensive toolkit for analyzing teosinte introgressions in maize
+    Near Isogenic Lines (NILs). Provides functions for processing GATK allelic counts,
+    performing ancestry classification using clustering and Hidden Markov Models,
+    extracting introgression segments, and creating visualizations. Designed for
+    BC2S3 and other structured breeding populations with expected Mendelian ratios.
+    Includes specialized functions for handling large-scale genomic data and
+    creating publication-ready plots of introgression patterns.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.3.2
+Depends: 
+    R (>= 4.1.0)
+Imports: 
+    data.table (>= 1.14.0),
+    dplyr (>= 1.1.0),
+    ggplot2 (>= 3.4.0),
+    tidyr (>= 1.3.0),
+    HMM (>= 1.0),
+    ggpubr (>= 0.6.0),
+    magrittr,
+    tibble
+Suggests: 
+    testthat (>= 3.0.0),
+    ComplexHeatmap,
+    Ckmeans.1d.dp,
+    rebmix
+URL: https://github.com/yourusername/bzeaseq
+BugReports: https://github.com/yourusername/bzeaseq/issues
+Roxygen: list(markdown = TRUE)
+Config/testthat/edition: 3
