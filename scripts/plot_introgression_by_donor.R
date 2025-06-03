@@ -1,4 +1,4 @@
-# plot_introgressions.R
+# plot_introgressions_by_donor.R
 # Main script for introgression visualization analysis
 
 library(ggplot2)
