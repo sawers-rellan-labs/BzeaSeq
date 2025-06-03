@@ -1,11 +1,7 @@
-# introgression_plots.R
-# Functions for processing and plotting introgression data
-#
-# Main functions:
-# - process_introgression_data(): Process raw introgression data
-# - prepare_stacked_data(): Prepare data for stacked visualization 
-# - plot_introgression_stacked(): Create stacked bar plots by chromosome
-# - convert_to_matrix(): Convert run-length encoded data to matrix for ComplexHeatmap
+#' Introgression Visualization and Analysis Functions
+#'
+#' This module provides comprehensive functions for processing, analyzing, and
+#' visualizing introgression data from maize ancestry analysis pipelines.
 
 library(ggplot2)
 library(dplyr)
@@ -15,8 +11,31 @@ library(ggpubr)
 # Define chromosome order as a constant
 CHROMOSOME_ORDER <- paste0("chr", 1:10)
 
-# Generate chromosome length data from assembly index
-generate_chromosome_lengths <- function() {
+#' Generate Chromosome Length Data
+#'
+#' Returns exact chromosome lengths for the B73 reference genome assembly.
+#'
+#' @param assembly Character. Genome assembly version (currently only "B73v5" supported)
+#'
+#' @return Data frame with columns:
+#'   \item{chrom}{Chromosome name (chr1-chr10)}
+#'   \item{length}{Chromosome length in base pairs}
+#'
+#' @details
+#' Chromosome lengths are from Zm-B73-REFERENCE-NAM-5.0.fa.fai.
+#' Values represent the exact nuclear chromosome lengths used for
+#' bin calculations and genome-wide visualizations.
+#'
+#' @examples
+#' chrom_lengths <- generate_chromosome_lengths()
+#' print(chrom_lengths)
+#'
+#' @export
+generate_chromosome_lengths <- function(assembly = "B73v5") {
+  if (!identical(assembly, "B73v5")) {
+    stop("Currently only B73v5 assembly is supported")
+  }
+  
   # Exact chromosome lengths from Zm-B73-REFERENCE-NAM-5.0.fa.fai
   chrom_lengths <- data.frame(
     chrom = paste0("chr", 1:10),
@@ -31,13 +50,54 @@ generate_chromosome_lengths <- function() {
       182411202,  # chr8
       163004744,  # chr9
       152435371   # chr10
-    )
+    ),
+    stringsAsFactors = FALSE
   )
-  return(chrom_lengths)
+  
+  chrom_lengths
 }
 
-# Re-encode HET and ALT segments as continuous introgression blocks
+#' Re-encode Introgression Blocks
+#'
+#' Identifies continuous introgression blocks by combining HET and ALT segments
+#' and calculates block-level statistics for downstream analysis.
+#'
+#' @param data Data frame with columns: sample, chrom, bin_start, bin_end, genotype
+#'
+#' @return Data frame with additional column:
+#'   \item{largest_introgression_midpoint}{Position of largest introgression block midpoint}
+#'
+#' @details
+#' Combines adjacent HET and ALT bins into continuous introgression blocks.
+#' Identifies the largest introgression block per sample-chromosome for
+#' ordering and visualization purposes. Uses run-length encoding for efficiency.
+#'
+#' @examples
+#' # Example introgression data
+#' introg_data <- data.frame(
+#'   sample = rep("sample1", 6),
+#'   chrom = rep("chr1", 6), 
+#'   bin_start = seq(1, 6e6, 1e6),
+#'   bin_end = seq(1e6, 6e6, 1e6),
+#'   genotype = c("REF", "HET", "ALT", "HET", "REF", "REF")
+#' )
+#'
+#' result <- reencode_introgressions(introg_data)
+#' print(result)
+#'
+#' @export
 reencode_introgressions <- function(data) {
+  # Input validation
+  if (!is.data.frame(data)) {
+    stop("data must be a data frame")
+  }
+  
+  required_cols <- c("sample", "chrom", "bin_start", "bin_end", "genotype")
+  missing_cols <- setdiff(required_cols, colnames(data))
+  if (length(missing_cols) > 0) {
+    stop(paste("Missing required columns:", paste(missing_cols, collapse = ", ")))
+  }
+  
   data %>%
     # Ensure chromosome factor ordering
     mutate(chrom = factor(chrom, levels = CHROMOSOME_ORDER)) %>%
@@ -88,8 +148,54 @@ reencode_introgressions <- function(data) {
            -block_start, -block_end, -block_span, -block_midpoint)
 }
 
-# Add segment IDs and snap to bin boundaries
+#' Add Segment Metadata and Snap to Bin Boundaries
+#'
+#' Adds segment identifiers and snaps coordinates to bin boundaries for
+#' consistent visualization and analysis.
+#'
+#' @param data Data frame with segment data
+#' @param bin_size Integer. Size of genomic bins in base pairs (default: 1000000)
+#'
+#' @return Data frame with additional columns:
+#'   \item{segment_id}{Sequential segment identifier within each sample-chromosome}
+#'   \item{bin_start}{Segment start snapped to bin boundary}
+#'   \item{bin_end}{Segment end snapped to bin boundary (not exceeding chromosome length)}
+#'   \item{span}{Updated span based on bin boundaries}
+#'   \item{largest_introgression_midpoint}{Position of largest introgression block}
+#'
+#' @details
+#' Ensures all segments align to standard bin boundaries for consistent
+#' analysis and visualization. Prevents bin coordinates from exceeding
+#' known chromosome lengths.
+#'
+#' @examples
+#' segment_data <- data.frame(
+#'   sample = "sample1",
+#'   chrom = "chr1", 
+#'   start = 1500000,
+#'   end = 2300000,
+#'   genotype = "ALT"
+#' )
+#' 
+#' result <- add_segment_metadata(segment_data, bin_size = 1000000)
+#' print(result)
+#'
+#' @export
 add_segment_metadata <- function(data, bin_size = 1000000) {
+  # Input validation
+  if (!is.data.frame(data)) {
+    stop("data must be a data frame")
+  }
+  if (!is.numeric(bin_size) || bin_size <= 0) {
+    stop("bin_size must be a positive number")
+  }
+  
+  required_cols <- c("sample", "chrom", "start", "end", "genotype")
+  missing_cols <- setdiff(required_cols, colnames(data))
+  if (length(missing_cols) > 0) {
+    stop(paste("Missing required columns:", paste(missing_cols, collapse = ", ")))
+  }
+  
   # Get chromosome lengths
   chrom_lengths <- generate_chromosome_lengths()
   
@@ -114,17 +220,77 @@ add_segment_metadata <- function(data, bin_size = 1000000) {
   # Re-encode introgressions and find largest introgression midpoint
   result <- reencode_introgressions(result)
   
-  return(result)
+  result
 }
 
-# Main function to process introgression data
+#' Process Introgression Data for Analysis
+#'
+#' Main preprocessing function that adds metadata and prepares introgression
+#' data for downstream visualization and analysis.
+#'
+#' @param data Data frame with raw introgression segment data
+#' @param bin_size Integer. Genomic bin size in base pairs (default: 1000000)
+#'
+#' @return Processed data frame ready for visualization functions
+#'
+#' @details
+#' This is the main entry point for processing raw introgression data.
+#' Combines metadata addition, bin snapping, and introgression re-encoding
+#' in a single convenient function call.
+#'
+#' @examples
+#' raw_data <- data.frame(
+#'   sample = c("sample1", "sample1"),
+#'   chrom = c("chr1", "chr1"),
+#'   start = c(1000000, 3000000),
+#'   end = c(2000000, 4000000),
+#'   genotype = c("HET", "ALT")
+#' )
+#' 
+#' processed <- process_introgression_data(raw_data)
+#' print(processed)
+#'
+#' @export
 process_introgression_data <- function(data, bin_size = 1000000) {
   result <- add_segment_metadata(data, bin_size)
-  return(result)
+  result
 }
 
-# Main function to prepare stacked data for visualization
+#' Prepare Stacked Data for Single Chromosome Visualization
+#'
+#' Filters and processes introgression data for visualization of a single
+#' chromosome across multiple samples.
+#'
+#' @param data Processed introgression data from `process_introgression_data()`
+#' @param chrom_to_plot Character. Chromosome name to visualize (e.g., "chr1")
+#'
+#' @return Data frame formatted for stacked visualization with columns:
+#'   \item{span}{Segment span in base pairs}
+#'   \item{bin}{Sequential bin number for visualization}
+#'   Plus all original columns from input data
+#'
+#' @details
+#' Prepares data for stacked bar plots by calculating spans and adding
+#' sequential bin numbers for proper visualization ordering.
+#'
+#' @examples
+#' # Assume processed_data exists from process_introgression_data()
+#' chr1_data <- prepare_stacked_data(processed_data, "chr1")
+#' print(head(chr1_data))
+#'
+#' @export
 prepare_stacked_data <- function(data, chrom_to_plot) {
+  # Input validation
+  if (!is.data.frame(data)) {
+    stop("data must be a data frame")
+  }
+  if (!is.character(chrom_to_plot) || length(chrom_to_plot) != 1) {
+    stop("chrom_to_plot must be a single character string")
+  }
+  if (!chrom_to_plot %in% CHROMOSOME_ORDER) {
+    warning(paste("chrom_to_plot", chrom_to_plot, "not in standard chromosome order"))
+  }
+  
   # Filter data for the specified chromosome and process
   result_df <- data %>% 
     # Ensure chromosome factor ordering
@@ -136,11 +302,50 @@ prepare_stacked_data <- function(data, chrom_to_plot) {
     ) %>%
     arrange(sample, bin_start)
   
-  return(result_df)
+  result_df
 }
 
-# Create sample order based on ordering preference
+#' Create Sample Order for Visualization
+#'
+#' Generates sample ordering based on different criteria for consistent
+#' visualization across plots.
+#'
+#' @param stacked_data Data frame prepared by `prepare_stacked_data()`
+#' @param order Character or character vector specifying ordering method:
+#'   \itemize{
+#'     \item{"sample"}{Alphabetical order by sample name}
+#'     \item{"position"}{Order by largest introgression midpoint position}
+#'     \item{Custom vector}{User-specified order of sample names}
+#'   }
+#'
+#' @return Character vector of sample names in desired order
+#'
+#' @details
+#' Supports multiple ordering strategies:
+#' - "sample": Simple alphabetical ordering
+#' - "position": Orders samples by the position of their largest introgression
+#' - Custom vector: User provides exact sample order
+#'
+#' @examples
+#' # Alphabetical ordering
+#' sample_order <- create_sample_order(stacked_data, "sample")
+#' 
+#' # Order by introgression position
+#' position_order <- create_sample_order(stacked_data, "position")
+#' 
+#' # Custom ordering
+#' custom_order <- create_sample_order(stacked_data, c("sample3", "sample1", "sample2"))
+#'
+#' @export
 create_sample_order <- function(stacked_data, order) {
+  # Input validation
+  if (!is.data.frame(stacked_data)) {
+    stop("stacked_data must be a data frame")
+  }
+  if (!"sample" %in% colnames(stacked_data)) {
+    stop("stacked_data must contain a 'sample' column")
+  }
+  
   # If order is a character vector with length > 1, it's a custom ordering
   if (is.character(order) && length(order) > 1) {
     # Validate custom order
@@ -174,6 +379,9 @@ create_sample_order <- function(stacked_data, order) {
     if (order == "sample") {
       sample_order <- levels(factor(stacked_data$sample)) %>% rev()
     } else if (order == "position") {
+      if (!"largest_introgression_midpoint" %in% colnames(stacked_data)) {
+        stop("stacked_data must contain 'largest_introgression_midpoint' column for position ordering")
+      }
       sample_order <- stacked_data %>%
         select(sample, largest_introgression_midpoint) %>%
         distinct() %>%
@@ -190,9 +398,17 @@ create_sample_order <- function(stacked_data, order) {
   stop("order must be either 'sample', 'position', or a character vector of sample names")
 }
 
-# Remove the separate validation function as it's now integrated
-
-# Create single chromosome plot
+#' Create Single Chromosome Plot
+#'
+#' Internal function to create a stacked bar plot for a single chromosome.
+#'
+#' @param stacked_data Data frame prepared for single chromosome
+#' @param chrom Character. Chromosome name for plot title
+#' @param genotype_colors Named vector of colors for genotypes
+#'
+#' @return ggplot object with stacked bar visualization
+#'
+#' @keywords internal
 create_chromosome_plot <- function(stacked_data, chrom, genotype_colors) {
   if (nrow(stacked_data) == 0) {
     return(ggplot() + 
@@ -223,11 +439,43 @@ create_chromosome_plot <- function(stacked_data, chrom, genotype_colors) {
       axis.title.x = element_blank()
     )
   
-  return(p)
+  p
 }
 
-# Main function to plot introgression segments using stacked bars
+#' Plot Introgression Segments Using Stacked Bars
+#'
+#' Main visualization function that creates stacked bar plots showing
+#' introgression patterns across all chromosomes.
+#'
+#' @param data Processed introgression data from `process_introgression_data()`
+#' @param chrom_lengths Data frame with chromosome lengths (optional, will be generated if NULL)
+#' @param order Character or character vector specifying sample ordering method
+#'   (default: "sample")
+#'
+#' @return Named list of ggplot objects, one for each chromosome
+#'
+#' @details
+#' Creates comprehensive visualization showing introgression patterns across
+#' the genome. Each chromosome gets its own stacked bar plot with samples
+#' ordered consistently according to the specified method.
+#'
+#' @examples
+#' # Create basic stacked plots
+#' plots <- plot_introgression_stacked(processed_data)
+#' 
+#' # Order by introgression position
+#' plots_ordered <- plot_introgression_stacked(processed_data, order = "position")
+#' 
+#' # Display chromosome 1 plot
+#' print(plots[["chr1"]])
+#'
+#' @export
 plot_introgression_stacked <- function(data, chrom_lengths = NULL, order = "sample") {
+  # Input validation
+  if (!is.data.frame(data)) {
+    stop("data must be a data frame")
+  }
+  
   # Generate chromosome lengths if not provided
   if (is.null(chrom_lengths)) {
     chrom_lengths <- generate_chromosome_lengths()
@@ -254,13 +502,62 @@ plot_introgression_stacked <- function(data, chrom_lengths = NULL, order = "samp
     chromosome_plots[[chrom]] <- create_chromosome_plot(stacked_data, chrom, genotype_colors)
   }
   
-  return(chromosome_plots)
+  chromosome_plots
 }
 
-# Convert run-length encoded introgression data to matrix format for ComplexHeatmap
+#' Convert Run-Length Encoded Data to Matrix Format
+#'
+#' Converts segment-based introgression data to a matrix format suitable
+#' for ComplexHeatmap visualization and other matrix-based analyses.
+#'
+#' @param processed_data Data frame with processed introgression segments
+#' @param bin_size Integer. Genomic bin size in base pairs (default: 1000000)
+#' @param chromosomes Character vector. Chromosomes to include (default: chr1-chr10)
+#' @param fill_missing Logical. Whether to fill missing bins with "REF" (default: TRUE)
+#'
+#' @return List containing:
+#'   \item{matrix}{Matrix with samples as columns, genomic bins as rows}
+#'   \item{bin_metadata}{Data frame with bin position information}
+#'   \item{chromosome_lengths}{Data frame with chromosome length information}
+#'
+#' @details
+#' Converts variable-length segments to fixed-size genomic bins for
+#' matrix-based visualization. Each bin is assigned the genotype of
+#' overlapping segments. Missing bins are filled with "REF" by default.
+#'
+#' @examples
+#' # Convert to matrix format
+#' matrix_data <- convert_to_matrix(processed_data, bin_size = 1000000)
+#' 
+#' # Access the genotype matrix
+#' genotype_matrix <- matrix_data$matrix
+#' 
+#' # Get bin metadata for annotations
+#' bin_info <- matrix_data$bin_metadata
+#'
+#' @export
 convert_to_matrix <- function(processed_data, bin_size = 1000000, 
                               chromosomes = paste0("chr", 1:10),
                               fill_missing = TRUE) {
+  # Input validation
+  if (!is.data.frame(processed_data)) {
+    stop("processed_data must be a data frame")
+  }
+  if (!is.numeric(bin_size) || bin_size <= 0) {
+    stop("bin_size must be a positive number")
+  }
+  if (!is.character(chromosomes) || length(chromosomes) == 0) {
+    stop("chromosomes must be a non-empty character vector")
+  }
+  if (!is.logical(fill_missing)) {
+    stop("fill_missing must be logical")
+  }
+  
+  required_cols <- c("sample", "chrom", "start", "end", "genotype")
+  missing_cols <- setdiff(required_cols, colnames(processed_data))
+  if (length(missing_cols) > 0) {
+    stop(paste("Missing required columns:", paste(missing_cols, collapse = ", ")))
+  }
   
   # Get chromosome lengths for creating full genome bins
   chrom_lengths <- generate_chromosome_lengths()
@@ -269,12 +566,17 @@ convert_to_matrix <- function(processed_data, bin_size = 1000000,
   all_bins <- data.frame()
   for (chrom in chromosomes) {
     chr_length <- chrom_lengths[chrom_lengths$chrom == chrom, "length"]
+    if (length(chr_length) == 0) {
+      warning(paste("Unknown chromosome:", chrom))
+      next
+    }
     max_bin <- ceiling(chr_length / bin_size)
     
     chr_bins <- data.frame(
       chrom = chrom,
       bin_pos = 1:max_bin,
-      genome_pos = paste0(chrom, "_", sprintf("%06d", 1:max_bin))
+      genome_pos = paste0(chrom, "_", sprintf("%06d", 1:max_bin)),
+      stringsAsFactors = FALSE
     )
     all_bins <- rbind(all_bins, chr_bins)
   }
@@ -282,7 +584,7 @@ convert_to_matrix <- function(processed_data, bin_size = 1000000,
   # Convert segments to bins
   segment_bins <- data.frame()
   
-  for (i in 1:nrow(processed_data)) {
+  for (i in seq_len(nrow(processed_data))) {
     segment <- processed_data[i, ]
     
     # Calculate which bins this segment covers
@@ -295,7 +597,8 @@ convert_to_matrix <- function(processed_data, bin_size = 1000000,
         sample = segment$sample,
         chrom = segment$chrom,
         bin_pos = start_bin:end_bin,
-        genotype = segment$genotype
+        genotype = segment$genotype,
+        stringsAsFactors = FALSE
       )
       segment_bins <- rbind(segment_bins, bins_covered)
     }
@@ -306,15 +609,20 @@ convert_to_matrix <- function(processed_data, bin_size = 1000000,
                                     sprintf("%06d", segment_bins$bin_pos))
   
   # Convert to wide format matrix
-  genotype_matrix <- segment_bins %>%
-    select(sample, genome_pos, genotype) %>%
-    pivot_wider(names_from = sample, values_from = genotype, 
-                values_fill = if(fill_missing) "REF" else NA) %>%
-    column_to_rownames("genome_pos") %>%
-    as.matrix()
+  if (nrow(segment_bins) > 0) {
+    genotype_matrix <- segment_bins %>%
+      select(sample, genome_pos, genotype) %>%
+      pivot_wider(names_from = sample, values_from = genotype, 
+                  values_fill = if(fill_missing) "REF" else NA) %>%
+      column_to_rownames("genome_pos") %>%
+      as.matrix()
+  } else {
+    # Create empty matrix if no segments
+    genotype_matrix <- matrix(character(0), nrow = 0, ncol = 0)
+  }
   
   # Ensure all bins are represented if fill_missing is TRUE
-  if (fill_missing) {
+  if (fill_missing && nrow(genotype_matrix) > 0) {
     missing_bins <- setdiff(all_bins$genome_pos, rownames(genotype_matrix))
     if (length(missing_bins) > 0) {
       # Create matrix for missing bins filled with REF
@@ -329,7 +637,8 @@ convert_to_matrix <- function(processed_data, bin_size = 1000000,
     }
     
     # Sort by genomic position
-    genotype_matrix <- genotype_matrix[all_bins$genome_pos[all_bins$genome_pos %in% rownames(genotype_matrix)], ]
+    available_positions <- all_bins$genome_pos[all_bins$genome_pos %in% rownames(genotype_matrix)]
+    genotype_matrix <- genotype_matrix[available_positions, , drop = FALSE]
   }
   
   # Create metadata for annotations
@@ -340,9 +649,9 @@ convert_to_matrix <- function(processed_data, bin_size = 1000000,
       position_mb = bin_pos * bin_size / 1e6
     )
   
-  return(list(
+  list(
     matrix = genotype_matrix,
     bin_metadata = bin_metadata,
     chromosome_lengths = chrom_lengths
-  ))
+  )
 }
