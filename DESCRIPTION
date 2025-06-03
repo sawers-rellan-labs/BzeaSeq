@@ -31,8 +31,10 @@ Suggests:
     testthat (>= 3.0.0),
     ComplexHeatmap,
     Ckmeans.1d.dp,
-    rebmix
+    rebmix,
+    ggpubr
 URL: https://github.com/yourusername/bzeaseq
 BugReports: https://github.com/yourusername/bzeaseq/issues
 Roxygen: list(markdown = TRUE)
 Config/testthat/edition: 3
+
