@@ -1,0 +1,38 @@
+[project]
+name = "BzeaSeq"
+description = "Teosinte Introgression Analysis for Maize Genomics"
+language = "R"
+
+[commands]
+format = "Rscript -e 'styler::style_pkg()'"
+lint = "Rscript -e 'lintr::lint_package()'"
+test = "Rscript -e 'devtools::test()'"
+check = "R CMD check ."
+build = "R CMD build ."
+install = "Rscript -e 'devtools::install()'"
+document = "Rscript -e 'devtools::document()'"
+
+project_prompt = """
+You are working on BzeaSeq, an R package for analyzing teosinte introgressions in maize Near Isogenic Lines (NILs). 
+
+The package provides:
+- Functions for processing GATK allelic counts into genomic bins
+- Ancestry classification using clustering and Hidden Markov Models  
+- Introgression segment extraction and analysis
+- Visualization functions for introgression patterns
+- Support for BC2S3 and other structured breeding populations
+
+Key components:
+- R/hmm.R: Breeding genetics calculations and HMM smoothing
+- R/ancestry_segments.R: Segment extraction from bin data
+- R/introgression_plots.R: Visualization functions
+- inst/scripts/: Analysis pipeline scripts
+- docs/: Documentation and workflow guides
+
+Code style follows tidyverse conventions with:
+- 2 spaces for indentation
+- 80 character line limit
+- snake_case naming
+- Comprehensive input validation
+- Roxygen2 documentation with markdown
+"""
