@@ -2,6 +2,7 @@
 
 ## Table of Contents
 - [Installation](#installation)
+- [Pipeline Implementation](#pipeline-implementation)
 - [1. Overview](#1-overview)
 - [2. Directory Structure](#2-directory-structure)
 - [3. Workflow Diagram](#3-workflow-diagram)
@@ -48,6 +49,16 @@ install.packages(c("ComplexHeatmap", "Ckmeans.1d.dp", "rebmix"))
 
 This repository contains pipelines for constructing a Teosinte reference variant set from the Schnable2023 dataset and performing ancestry segment calling using the WideSeq approach.
 
+## Pipeline Implementation
+
+For complete implementation details and reproducible workflows, see:
+- [**Teosinte variant acquisition from Schnable2023**](docs/getting_teosinte_variants_from_Schnable2023.md) - Comprehensive data acquisition workflow with shell commands and outputs
+- [**WideSeq pipeline detailed workflow**](docs/Understanding_WideSeq.md) - Complete pipeline implementation guide with GATK processing, HMM theory, and HPC setup
+- [**Environment setup**](envs/bzeaseq.yml) - Conda environment specifications for reproducible analysis
+- [**Implementation analysis**](docs/README_analysis.md) - Documentation structure and completeness assessment
+
+These detailed guides provide the complete procedural knowledge needed to reproduce the analysis from raw data acquisition through final visualization.
+
 ## 1. Overview
 
 This project consists of two main pipelines:
@@ -69,7 +80,10 @@ Both pipelines are optimized for high-performance computing environments using L
   - `get_ancestry_calls.R`: Main ancestry calling script
   - `run_wideseq.sh`: Complete WideSeq pipeline
   - `get_variants_from_schnable2023.sh`: Variant extraction
-- `docs/`: Documentation and workflow guides
+- `docs/`: **Comprehensive implementation documentation**
+  - `getting_teosinte_variants_from_Schnable2023.md`: Data acquisition workflow
+  - `Understanding_WideSeq.md`: Complete pipeline implementation
+  - `README_analysis.md`: Documentation completeness analysis
 - `man/`: R package documentation
 - `envs/`: Conda environment files
 
@@ -116,6 +130,8 @@ graph TD
 
 The Schnable2023 study published in The Plant Journal ("Exploring the pan-genome of the *Zea* genus through genome-wide association studies") includes variant data from both maize and teosinte samples already mapped to the B73 reference genome version 5 (`Zm-B73-REFERENCE-NAM-5.0`). This eliminates the need for liftover from v4 to v5 that was required for the Chen2022 dataset.
 
+> **📖 For detailed implementation**: See [getting_teosinte_variants_from_Schnable2023.md](docs/getting_teosinte_variants_from_Schnable2023.md) for complete data acquisition workflow with shell commands and expected outputs.
+
 ### 4.2 Data Acquisition
 
 The VCF files are distributed across 10 chromosome-specific files and are available from the SNPVersity 2.0 repository. Use the `inst/extdata/checksums.tab` file for download verification.
@@ -141,6 +157,8 @@ Calculate statistics for the filtered variants:
 Example output shows ~27.6 million variants across all chromosomes with an average density of 1294.82 variants per 100kb.
 
 ## 5. WideSeq Analysis Pipeline
+
+> **📖 For detailed implementation**: See [Understanding_WideSeq.md](docs/Understanding_WideSeq.md) for comprehensive pipeline workflow including GATK preprocessing, HMM theory, and high-performance computing setup.
 
 ### 5.1 Allelic Count Collection
 
