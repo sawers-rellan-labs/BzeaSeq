@@ -1,28 +1,25 @@
 # plot_introgressions_by_donor.R
-# Main script for introgression visualization analysis
+# Updated script to use BzeaSeq package functions
 
 library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(stringr)
 library(cowplot)
-
-# Source the introgression plotting functions
-source("R/introgression_plots.R")
+library(BzeaSeq)  # Use package functions instead of sourcing
 
 # Read in data from file
-# Replace this with your file path
-# data <- read.table("~/Desktop/all_samples_bzea_ALT.bed", sep = "\t", na.strings = na.strings = c("NA",""))
 data <- read.table("/Volumes/BZea/bzeaseq/ancestry/all_samples_ancestry_segments.bed",
-                   sep = "\t", na.strings = c("NA",""), skip =1)
+                   sep = "\t", na.strings = c("NA",""), skip = 1)
 colnames(data) <- c("sample", "chrom", "start", "end", "genotype", "numeric", "freq")
 
-# Uncomment and modify these sections as needed for your sample metadata
+# Read metadata (update paths as needed)
 bzea <- read.csv("~/Desktop/J2Teo_Final_DB.csv", na.strings = c("NA",""))
 sample_sheet <- read.csv("~/Desktop/BZea-Sample-List.csv", na.strings = c("NA",""))
-sample_sheet$row <-  gsub("PV23-","",sample_sheet$Sample_Origin) %>% as.integer()
+sample_sheet$row <- gsub("PV23-","",sample_sheet$Sample_Origin) %>% as.integer()
 sample_sheet$is_check <- grepl("B73|Purple",sample_sheet$Line.ID, perl=TRUE)
 
+# Process metadata
 in_bzea <- sample_sheet$row > 7369
 in_lanteo <- sample_sheet$row < 7288
 in_landb <- sample_sheet$row > 7288 & sample_sheet$row <= 7369
@@ -32,40 +29,41 @@ sample_sheet$project[in_lanteo] <- "lanteo"
 sample_sheet$project[in_landb] <- "landb"
 
 metadata <- sample_sheet %>% 
-  #filter(project=="bzea") %>%
   select(
     field_row = Sample_Origin,
     project,
     sample = Seq_Full_ID,
     is_check,
-    pedigree_sample_sheet = Line.ID) %>%
+    pedigree_sample_sheet = Line.ID
+  ) %>%
   left_join(bzea %>% select(
-    field_row =  seed_origin,
+    field_row = seed_origin,
     sample = sequencing.id,
-    sample_group =taxa_code,
+    sample_group = taxa_code,
     founder_group = taxa_code,
     donor_id = accession_id,
-    pedigree = line_id)
-  ) 
+    pedigree = line_id
+  )) 
 
 metadata$sample_group[grepl("Purple",metadata$pedigree_sample_sheet)] <- "Purple"
 metadata$sample_group[grepl("B73",metadata$pedigree_sample_sheet)] <- "B73"
 metadata$founder_group[grepl("B73",metadata$pedigree_sample_sheet)] <- "B73"
+metadata$pedigree_sample_sheet <- NULL
 
-metadata$pedigree_sample_sheet <-NULL
+NILs <- metadata$sample[in_bzea & !metadata$is_check]
 
-NILs  <- metadata$sample[in_bzea & ! metadata$is_check]
-
-# Add metadata to data and prepare for split
+# Add metadata to data and prepare for processing
 data_full <- data %>%
   inner_join(metadata) %>%
-  mutate(sample = pedigree) %>%  # Use pedigree as sample identifier
+  mutate(sample = pedigree) %>%
   select(sample, chrom, start, end, genotype, numeric, freq, donor_id)
 
 cat("Found", length(unique(data_full$donor_id)), "unique donor accessions\n")
 
+# Process introgression data using package function
+processed_data <- process_introgression_data(data_full)
 
-# Function to split samples into chunks of max 20
+# Function to split samples into chunks
 chunk_samples <- function(samples, chunk_size = 20) {
   split(samples, ceiling(seq_along(samples) / chunk_size))
 }
@@ -81,10 +79,10 @@ donor_plots <- data_full %>%
     cat("Processing donor:", donor, "with", n_samples, "NILs\n")
     
     if (n_samples <= 20) {
-      # Single plot for this donor
+      # Single plot for this donor using package functions
       plot_data <- donor_data %>% select(-donor_id)
-      processed_data <- process_introgression_data(plot_data)
-      chromosome_plots <- plot_introgression_stacked(processed_data, order = "sample")
+      processed_plot_data <- process_introgression_data(plot_data)
+      chromosome_plots <- plot_introgression_stacked(processed_plot_data, order = "sample")
       
       # Theme for combining chromosomes
       chr_theme2 <- theme(
@@ -97,7 +95,7 @@ donor_plots <- data_full %>%
         axis.ticks.y = element_blank()
       )
       
-      # Combine all chromosomes
+      # Combine all chromosomes using package plot functions
       all_chromosomes_plot <- ggpubr::ggarrange(
         plotlist = lapply(paste0("chr", 1:10), function(chrom_name) {
           if (!is.null(chromosome_plots[[chrom_name]])) {
@@ -138,8 +136,9 @@ donor_plots <- data_full %>%
           filter(sample %in% chunk_samples_list) %>%
           select(-donor_id)
         
-        processed_data <- process_introgression_data(plot_data)
-        chromosome_plots <- plot_introgression_stacked(processed_data, order = "sample")
+        # Use package functions for processing and plotting
+        processed_plot_data <- process_introgression_data(plot_data)
+        chromosome_plots <- plot_introgression_stacked(processed_plot_data, order = "sample")
         
         # Theme for combining chromosomes
         chr_theme2 <- theme(
@@ -193,4 +192,3 @@ lapply(donor_plots, print)
 dev.off()
 
 cat("PDF saved to: ~/Desktop/introgressions_by_donor_accession.pdf\n")
-
